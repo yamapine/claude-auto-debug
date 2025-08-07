@@ -23,7 +23,7 @@ for fname in pine_files:
 
     # Claude APIにリクエスト
     response = client.messages.create(
-        model="claude-3-opus-20240229",  # 最新のモデル名
+        model="claude-sonnet-4-20250514",  # 最新のモデル名
         max_tokens=2048,
         temperature=0,
         system="あなたは優秀なPine Scriptエンジニアです。",
