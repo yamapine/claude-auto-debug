@@ -1,0 +1,107 @@
+//@version=6
+// GVZ ボラ・ランプ [3935P] v1.1 — 2026-10-22
+// v1.1: 通知を「月初に1回（EA稼働/停止）」に変更（既定）。ゾーン変化の通知は選択式
+// 推奨: CBOE:GVZ の日足チャートに入れる（月初の判定値が前月最終営業日の終値と一致する）。
+//       XAUUSD の分足に入れた場合、米国市場が開く前の時間帯は1日前の値になることがある
+// 目的: 金の「これから荒れそうか」を GVZ（CBOE 金ETF予想変動率）で表示・通知する
+// 根拠: claude/GoldVol_Forecast_Result_20261022.md / claude/GVZ_Alert_Result_20261022.md
+// ・GVZ は毎日の値で判断してよい（月末だけに限る必要なし）
+// ・「1か月前より上昇」は予測をほぼ改善しない → 参考表示のみ
+// ・境目 17 / 22 は EA の ATR% 0.15 / 0.20 に対応（2022-26年の対応関係・事後の目安）
+indicator("GVZ ボラ・ランプ [3935P]", shorttitle = "GVZランプ", overlay = false, precision = 2)
+
+// ── 1. 入力 ─────────────────────────────
+string GRP_MAIN = "基本設定"
+string GRP_VIS  = "表示設定"
+string gvzSym = input.symbol("CBOE:GVZ", "GVZシンボル", group = GRP_MAIN, tooltip = "CBOE Gold ETF Volatility Index。どのチャートに入れても、この銘柄の日足を読みます。")
+float  thHigh = input.float(22.0, "好機ライン（これ以上＝荒れやすい）", minval = 1.0, step = 0.5, group = GRP_MAIN, tooltip = "GVZ 22 ≒ EAのATR% 0.20（2022-26年の対応・事後の目安）。前月末GVZがこの帯の翌月、EAは平均+221（BT参考値・33か月）。")
+float  thLow  = input.float(17.0, "低ボラライン（これ未満＝休む目安）", minval = 1.0, step = 0.5, group = GRP_MAIN, tooltip = "GVZ 17 ≒ EAのATR% 0.15（2022-26年の対応・事後の目安）。")
+string GRP_ALT = "通知設定"
+string alertMode = input.string("月初に1回", "通知のタイミング", options = ["月初に1回", "ゾーンが変わった時"], group = GRP_ALT, tooltip = "月初に1回：毎月最初の足で、前月末のGVZから「今月はEA稼働 / 停止」を1回だけ通知。\nゾーンが変わった時：17・22のラインをまたいだ時だけ通知。")
+bool   showBg  = input.bool(true, "背景をゾーン色で塗る", group = GRP_VIS)
+bool   showTbl = input.bool(true, "情報パネルを表示", group = GRP_VIS)
+
+// ── 2. 計算（全てグローバルスコープ・確定値のみ） ─────────────
+// 前日に確定した日足終値を使う（[1] + lookahead_on = リペイントしない定番の書き方）
+float gvz   = request.security(gvzSym, "D", close[1], lookahead = barmerge.lookahead_on)
+float gvz21 = request.security(gvzSym, "D", close[22], lookahead = barmerge.lookahead_on)
+float chg   = gvz21 > 0 ? (gvz / gvz21 - 1.0) * 100.0 : na
+
+bool zHigh = gvz >= thHigh
+bool zLow  = gvz < thLow
+color C_HIGH = #2a78d6
+color C_MID  = #eda100
+color C_LOW  = #8a8983
+color zCol = zHigh ? C_HIGH : zLow ? C_LOW : C_MID
+
+bool modeMonth = alertMode == "月初に1回"
+bool newMonth  = timeframe.change("M")
+bool eaStop    = gvz < thLow
+
+bool xUpHigh = ta.crossover(gvz, thHigh)
+bool xDnHigh = ta.crossunder(gvz, thHigh)
+bool xDnLow  = ta.crossunder(gvz, thLow)
+bool xUpLow  = ta.crossover(gvz, thLow)
+
+// ── 3. 描画 ─────────────────────────────
+plot(gvz, "GVZ（前日確定値）", color = zCol, linewidth = 2)
+hline(thHigh, "好機ライン", color = color.new(C_HIGH, 40), linestyle = hline.style_dashed)
+hline(thLow, "低ボラライン", color = color.new(C_LOW, 40), linestyle = hline.style_dashed)
+bgcolor(showBg and zHigh ? color.new(C_HIGH, 88) : showBg and zLow ? color.new(C_LOW, 90) : na, title = "ゾーン背景")
+
+// ── 4. アラート（確定足のみ） ─────────────────
+// 月初モード：その月の最初の足で1回だけ（使う値は前月最終営業日の確定GVZ）
+bool aMonthStop = modeMonth and newMonth and eaStop and barstate.isconfirmed
+bool aMonthRun  = modeMonth and newMonth and not eaStop and barstate.isconfirmed
+// ゾーン変化モード
+bool aUpHigh = not modeMonth and xUpHigh and barstate.isconfirmed
+bool aDnHigh = not modeMonth and xDnHigh and barstate.isconfirmed
+bool aDnLow  = not modeMonth and xDnLow and barstate.isconfirmed
+bool aUpLow  = not modeMonth and xUpLow and barstate.isconfirmed
+
+alertcondition(aMonthStop, "月初: 今月はEA停止", "前月末のGVZが低ボラライン未満です。今月はEAを止める目安です。")
+alertcondition(aMonthRun, "月初: 今月はEA稼働", "前月末のGVZが低ボラライン以上です。今月はEAを動かす目安です。")
+alertcondition(aUpHigh, "① GVZ 好機ゾーン入り", "GVZが好機ライン以上になりました（前日確定値）。荒れやすい局面です。")
+alertcondition(aDnHigh, "② GVZ 好機ゾーン終了", "GVZが好機ラインを下回りました（前日確定値）。")
+alertcondition(aDnLow, "③ GVZ 低ボラ入り（休む目安）", "GVZが低ボララインを下回りました（前日確定値）。EAは休む目安です。")
+alertcondition(aUpLow, "④ GVZ 低ボラ脱出", "GVZが低ボララインを上回りました（前日確定値）。")
+
+// 値入りの通知（アラート作成時に「alert() 関数呼び出しのみ」を選ぶと届く）
+string sVal = str.tostring(gvz, "#.##")
+string sLow = str.tostring(thLow, "#.#")
+if aMonthStop
+    alert("【今月はEA停止】前月末GVZ " + sVal + "（ライン " + sLow + " 未満）", alert.freq_once_per_bar_close)
+if aMonthRun
+    alert("【今月はEA稼働】前月末GVZ " + sVal + "（ライン " + sLow + " 以上）", alert.freq_once_per_bar_close)
+if aUpHigh
+    alert("GVZ 好機ゾーン入り: " + sVal + "（ライン " + str.tostring(thHigh, "#.#") + "）", alert.freq_once_per_bar_close)
+if aDnHigh
+    alert("GVZ 好機ゾーン終了: " + sVal + "（ライン " + str.tostring(thHigh, "#.#") + "）", alert.freq_once_per_bar_close)
+if aDnLow
+    alert("GVZ 低ボラ入り（休む目安）: " + sVal + "（ライン " + sLow + "）", alert.freq_once_per_bar_close)
+if aUpLow
+    alert("GVZ 低ボラ脱出: " + sVal + "（ライン " + sLow + "）", alert.freq_once_per_bar_close)
+
+// ── 5. 情報パネル ───────────────────────────
+var table tb = table.new(position.top_right, 2, 7, bgcolor = color.new(color.black, 80), border_width = 1)
+bool isGold = str.contains(syminfo.ticker, "XAU") or str.contains(syminfo.ticker, "GC")
+if showTbl and barstate.islast
+    string zName = zHigh ? "好機（荒れやすい）" : zLow ? "低ボラ（休む目安）" : "普通"
+    float m30 = gvz / math.sqrt(12.0)
+    float d1  = gvz / math.sqrt(252.0)
+    string sChg = na(chg) ? "-" : (chg >= 0 ? "+" : "") + str.tostring(chg, "#.#") + "%"
+    table.cell(tb, 0, 0, "GVZ（前日確定）", text_color = color.white, text_size = size.small)
+    table.cell(tb, 1, 0, sVal, text_color = zCol, text_size = size.normal)
+    table.cell(tb, 0, 1, "ゾーン", text_color = color.white, text_size = size.small)
+    table.cell(tb, 1, 1, zName, text_color = zCol, text_size = size.small)
+    table.cell(tb, 0, 2, "1か月前比（参考）", text_color = color.white, text_size = size.small)
+    table.cell(tb, 1, 2, sChg, text_color = color.white, text_size = size.small)
+    table.cell(tb, 0, 3, "予想値幅 30日 ※理論値", text_color = color.white, text_size = size.small)
+    table.cell(tb, 1, 3, "±" + str.tostring(m30, "#.#") + "%", text_color = color.white, text_size = size.small)
+    table.cell(tb, 0, 4, "予想値幅 1日 ※理論値", text_color = color.white, text_size = size.small)
+    table.cell(tb, 1, 4, "±" + str.tostring(d1, "#.##") + "%", text_color = color.white, text_size = size.small)
+    table.cell(tb, 0, 5, "EA（今の値での目安）", text_color = color.white, text_size = size.small)
+    table.cell(tb, 1, 5, eaStop ? "停止" : "稼働", text_color = eaStop ? C_LOW : C_HIGH, text_size = size.small)
+    if isGold
+        table.cell(tb, 0, 6, "価格換算 30日 / 1日", text_color = color.white, text_size = size.small)
+        table.cell(tb, 1, 6, "±" + str.tostring(close * m30 / 100.0, "#") + " / ±" + str.tostring(close * d1 / 100.0, "#"), text_color = color.white, text_size = size.small)
