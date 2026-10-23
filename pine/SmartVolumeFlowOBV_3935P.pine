@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart Volume Flow OBV [3935P]  v1.13  （旧名: OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart Volume Flow OBV [3935P]  v1.14  （旧名: OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回追加】v1.13: ⑥「SLドテン後ロック」を追加（既定=Z/クロスのみ）。SLドテン（バンドウォーク追随）玉は、同方向シグナルが出るまで反対方向のZ信号/クロスを無視して保有継続。「Z/クロス＋BB復帰」ならBB復帰の決済/ドテンも無視。ドテン後ロック(④)の判定式を等価に整理（④の動作は変更なし）。効果は未検証【わかりません】。
+// 【今回修正】v1.14: ⑤月別損益の最下段に「合計Nヶ月」行を追加（表示中の月の合計。当月は含み損益込み）。チャート読み込み範囲外の月（旧「11ヶ月前」等の「-」行）は非表示に変更。最古の月（途中からの集計）に「※」表示。
+// 【前版(v1.13)で追加】v1.13: ⑥「SLドテン後ロック」を追加（既定=Z/クロスのみ）。SLドテン（バンドウォーク追随）玉は、同方向シグナルが出るまで反対方向のZ信号/クロスを無視して保有継続。「Z/クロス＋BB復帰」ならBB復帰の決済/ドテンも無視。ドテン後ロック(④)の判定式を等価に整理（④の動作は変更なし）。効果は未検証【わかりません】。
 // 【前版(v1.12)で追加】v1.12: ⑥「BB復帰ドテン玉がSLにかかったらドテン」を追加（既定ON）。SL約定価格で反対方向に建て直し、新SLは通常の「SL幅」でSL約定価格基準。SLドテン玉の次のSLはノーポジ（連鎖なし）。SLドテン足の他シグナルは無視。ラベル「SL→BUY/SL→SELL」・アラート「OBV SLドテン」追加。効果は未検証【わかりません】。
 // 【前版(v1.11)で追加】v1.11: ⑥「BB復帰ドテン時のSL幅（ATR倍）」を追加（BB復帰ドテンで建てた玉だけ別のSL幅。Z信号/原型クロスの建玉は従来の「SL幅」）。既定5.0＝従来と同一動作。小さい値の優位性は未検証【わかりません】。
 // 【前版(v1.10)で修正】v1.10: ⑤「表示する月数」を1〜3 → 1〜12に拡張（過去月の損益を配列で最大11ヶ月保持。月の区切り・計上方法は従来と同一）。読み込み範囲外の月は「-」表示。
@@ -74,7 +75,7 @@ tblOnMainIn = input.bool(true, "メインチャートに表示（OFF=このペ�
 tblCompactIn = input.bool(false, "コンパクト表示（Position/Entry/含み損益/月別のみ）", group=G5, tooltip="ON: 見出し・勝率・PF等を省き、Position／Entry価格／含み損益／月別損益のみ表示。OFF: 勝率・PF・期待値・最大DD・買い/売り別も表示。")
 tblPosIn    = input.string("左下", "表示位置", options=["右上", "中上", "左上", "右中", "中央", "左中", "右下", "中下", "左下"], group=G5, inline="tp")
 tblSizeIn   = input.string("標準", "サイズ", options=["極小", "小", "標準", "大", "特大"], group=G5, inline="tp", tooltip="テーブル全体の文字サイズ。標準=項目名normal・値large・月別項目名small。")
-tblMonthsIn = input.int(3, "表示する月数（当月から遡る）", minval=1, maxval=12, group=G5, tooltip="1〜12。1=当月のみ、3=当月・先月・先々月、12=当月＋過去11ヶ月。月の区切りは日本時間(Asia/Tokyo)の1日0:00。決済した足の月に計上。\nチャートに読み込まれた期間より前の月は「-」表示（短い時間足ほど遡れる月数が少ない）。")
+tblMonthsIn = input.int(3, "表示する月数（当月から遡る）", minval=1, maxval=12, group=G5, tooltip="1〜12。1=当月のみ、3=当月・先月・先々月、12=当月＋過去11ヶ月。月の区切りは日本時間(Asia/Tokyo)の1日0:00。決済した足の月に計上。\nチャートに読み込まれた期間より前の月は表示しない（短い時間足ほど遡れる月数が少ない）。最下段に表示中の月の合計を表示。")
 tblMaxTradesIn = input.int(100, "統計の対象（直近N件）", minval=5, maxval=500, group=G5, tooltip="勝率・PF・期待値・最大DD・買い/売り別を、直近N件のクローズ済みトレードで集計（月別損益はこの件数に依存しない）。")
 costIn      = input.float(0.5, "コスト控除（建値通貨/往復）", minval=0.0, step=0.05, group=G5, tooltip="1往復あたりのコストを建値通貨で指定（XAUUSDならUSD/oz）。CFDはスプレッドが往復で1回分（買いはAsk・売りはBidで約定、チャートはBid基準）なので、往復＝スプレッド1回分＋滑り。OANDA証券の金CFDは取引手数料無料（fxnav掲載）。\n既定0.5: TradingView上のOANDA:XAUUSD気配で観測したスプレッド0.23〜0.58USD（1pt=0.01USD仮定・少数サンプル）に基づく概算。指標時・早朝は拡大。金利調整額（スワップ）は未計上。")
 lotsIn      = input.float(10.0, "ロット数", minval=0.000001, step=1.0, group=G5, inline="lot")
@@ -260,6 +261,7 @@ var int   pnlMonthCnt     = 0
 var array<float> pnlHistAcc = array.new<float>(0)
 var array<int>   pnlHistCnt = array.new<int>(0)
 var array<int>   pnlHistKey = array.new<int>(0)
+var bool pnlHistCapped = false  // 11ヶ月超で最古（途中からの集計月）を捨てたらtrue
 int pnlJstYear  = year(time, "Asia/Tokyo")
 int pnlJstMonth = month(time, "Asia/Tokyo")
 int pnlCurMonthKey = pnlJstYear * 100 + pnlJstMonth
@@ -272,6 +274,7 @@ if na(pnlMonthKey) or pnlCurMonthKey != pnlMonthKey
             array.pop(pnlHistAcc)
             array.pop(pnlHistCnt)
             array.pop(pnlHistKey)
+            pnlHistCapped := true
     pnlMonthAcc := 0.0
     pnlMonthCnt := 0
     pnlMonthKey := pnlCurMonthKey
@@ -353,7 +356,7 @@ f_pnlCell(table t, int r, string k, string v, color bg, color vc, int ksz, int v
     true
 
 string pnlTablePos = tblPosIn == "右上" ? position.top_right : tblPosIn == "中上" ? position.top_center : tblPosIn == "左上" ? position.top_left : tblPosIn == "右中" ? position.middle_right : tblPosIn == "中央" ? position.middle_center : tblPosIn == "左中" ? position.middle_left : tblPosIn == "右下" ? position.bottom_right : tblPosIn == "中下" ? position.bottom_center : position.bottom_left
-int pnlTblRows = (tblCompactIn ? 3 : 10) + tblMonthsIn
+int pnlTblRows = (tblCompactIn ? 3 : 10) + tblMonthsIn + 1
 
 // force_overlayはconst boolのため、入力値で2通りのtable.new()を呼び分ける
 var table pnlTbl = na
@@ -439,19 +442,34 @@ if showTblIn and barstate.islast and not na(pnlTbl)
     r += 1
     f_pnlCell(pnlTbl, r, thisMonthLabel, f_pnlAmt(monthTotal), pnlRowBg1, f_pnlAmtColor(monthTotal), 1, 3, thisMonthTip)
     r += 1
-    // 過去月（k=0:先月 … k=10:11ヶ月前）。tblMonthsIn=1のときはループしない（Pineのforは to<from で逆順に回るため）
+    // 過去月（k=0:先月 …）。読み込み範囲内にデータがある月だけ表示（範囲外の月は行を出さない）
+    // tblMonthsIn=1 or 履歴なしのときはループしない（Pineのforは to<from で逆順に回るため）
     int histN = array.size(pnlHistAcc)
-    if tblMonthsIn >= 2
-        for k = 0 to tblMonthsIn - 2
-            bool  hHas = k < histN
-            float hAcc = hHas ? array.get(pnlHistAcc, k) : na
-            int   hCnt = hHas ? array.get(pnlHistCnt, k) : na
-            int   hKey = hHas ? array.get(pnlHistKey, k) : na
-            string hName = hHas ? str.tostring(hKey % 100) + "月" : k == 0 ? "先月" : k == 1 ? "先々月" : str.tostring(k + 1) + "ヶ月前"
-            string hLabel = hName + "損益\n(" + (hHas ? str.tostring(hCnt) : "-") + "件)"
-            string hTip = hHas ? str.tostring(math.floor(hKey / 100)) + "年" + str.tostring(hKey % 100) + "月（暦月・JST）にクローズした分の実現損益（確定値）" : "チャートの読み込み範囲にこの月のデータがないため「-」表示。"
+    int nShow = math.min(tblMonthsIn - 1, histN)
+    float sumAcc = monthTotal
+    int   sumCnt = pnlMonthCnt
+    int   oldestKey = pnlCurMonthKey
+    string partialNote = "※最古の月はチャート読み込み開始時点からの集計（月の途中から）のため実際より少ない可能性あり。"
+    if nShow > 0
+        for k = 0 to nShow - 1
+            float hAcc = array.get(pnlHistAcc, k)
+            int   hCnt = array.get(pnlHistCnt, k)
+            int   hKey = array.get(pnlHistKey, k)
+            bool  hOldest = k == histN - 1 and not pnlHistCapped
+            string hLabel = str.tostring(hKey % 100) + "月損益" + (hOldest ? "※" : "") + "\n(" + str.tostring(hCnt) + "件)"
+            string hTip = str.tostring(math.floor(hKey / 100)) + "年" + str.tostring(hKey % 100) + "月（暦月・JST）にクローズした分の実現損益（確定値）" + (hOldest ? "\n" + partialNote : "")
             f_pnlCell(pnlTbl, r, hLabel, f_pnlAmt(hAcc), k % 2 == 0 ? pnlRowBg2 : pnlRowBg1, f_pnlAmtColor(hAcc), 1, 3, hTip)
             r += 1
+            sumAcc += hAcc
+            sumCnt += hCnt
+            oldestKey := hKey
+        // 合計行（表示中の月の合計＝当月(含み損益込み)＋過去月の実現損益）
+        int nMonths = nShow + 1
+        bool hasPartial = nShow == histN and not pnlHistCapped
+        string sumLabel = "合計" + str.tostring(nMonths) + "ヶ月" + (hasPartial ? "※" : "") + "\n(" + str.tostring(sumCnt) + "件)"
+        string sumTip = str.tostring(math.floor(oldestKey / 100)) + "年" + str.tostring(oldestKey % 100) + "月〜" + str.tostring(pnlJstYear) + "年" + str.tostring(pnlJstMonth) + "月の損益合計（当月は含み損益込み）" + (nShow < tblMonthsIn - 1 ? "\n指定" + str.tostring(tblMonthsIn) + "ヶ月のうち" + str.tostring(tblMonthsIn - nMonths) + "ヶ月はチャート読み込み範囲外のため除外。" : "") + (hasPartial ? "\n" + partialNote : "")
+        f_pnlCell(pnlTbl, r, sumLabel, f_pnlAmt(sumAcc), pnlHeaderBg, f_pnlAmtColor(sumAcc), 1, 3, sumTip)
+        r += 1
 
 // ── アラート ──
 color barCol = barModeIn == "なし" ? na : pos == 1 ? barLongColIn : pos == -1 ? barShortColIn : barModeIn == "ロング/ショート/ノーポジ" ? barFlatColIn : na
