@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart Volume Flow OBV [3935P]  v1.14  （旧名: OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart Volume Flow OBV [3935P]  v1.15  （旧名: OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回修正】v1.14: ⑤月別損益の最下段に「合計Nヶ月」行を追加（表示中の月の合計。当月は含み損益込み）。チャート読み込み範囲外の月（旧「11ヶ月前」等の「-」行）は非表示に変更。最古の月（途中からの集計）に「※」表示。
+// 【今回修正】v1.15: ⑤合計行の背景色をネイビー#1B2A4Aに変更（ユーザー指定。色サンプルB）。ロジック変更なし。
+// 【前版(v1.14)で修正】v1.14: ⑤月別損益の最下段に「合計Nヶ月」行を追加（表示中の月の合計。当月は含み損益込み）。チャート読み込み範囲外の月（旧「11ヶ月前」等の「-」行）は非表示に変更。最古の月（途中からの集計）に「※」表示。
 // 【前版(v1.13)で追加】v1.13: ⑥「SLドテン後ロック」を追加（既定=Z/クロスのみ）。SLドテン（バンドウォーク追随）玉は、同方向シグナルが出るまで反対方向のZ信号/クロスを無視して保有継続。「Z/クロス＋BB復帰」ならBB復帰の決済/ドテンも無視。ドテン後ロック(④)の判定式を等価に整理（④の動作は変更なし）。効果は未検証【わかりません】。
 // 【前版(v1.12)で追加】v1.12: ⑥「BB復帰ドテン玉がSLにかかったらドテン」を追加（既定ON）。SL約定価格で反対方向に建て直し、新SLは通常の「SL幅」でSL約定価格基準。SLドテン玉の次のSLはノーポジ（連鎖なし）。SLドテン足の他シグナルは無視。ラベル「SL→BUY/SL→SELL」・アラート「OBV SLドテン」追加。効果は未検証【わかりません】。
 // 【前版(v1.11)で追加】v1.11: ⑥「BB復帰ドテン時のSL幅（ATR倍）」を追加（BB復帰ドテンで建てた玉だけ別のSL幅。Z信号/原型クロスの建玉は従来の「SL幅」）。既定5.0＝従来と同一動作。小さい値の優位性は未検証【わかりません】。
@@ -331,6 +332,7 @@ color pnlPosColor   = color.new(#26a69a, 0)
 color pnlNegColor   = color.new(#ef5350, 0)
 color pnlTextColor  = color.new(#c5c9d3, 0)
 color pnlHeaderBg   = color.new(#0a0d12, 0)
+color pnlTotalBg    = color.new(#1b2a4a, 0)  // 合計行（ネイビー）
 color pnlRowBg1     = color.new(#12151c, 0)
 color pnlRowBg2     = color.new(#181c25, 0)
 color pnlBorder     = color.new(#242833, 0)
@@ -468,7 +470,7 @@ if showTblIn and barstate.islast and not na(pnlTbl)
         bool hasPartial = nShow == histN and not pnlHistCapped
         string sumLabel = "合計" + str.tostring(nMonths) + "ヶ月" + (hasPartial ? "※" : "") + "\n(" + str.tostring(sumCnt) + "件)"
         string sumTip = str.tostring(math.floor(oldestKey / 100)) + "年" + str.tostring(oldestKey % 100) + "月〜" + str.tostring(pnlJstYear) + "年" + str.tostring(pnlJstMonth) + "月の損益合計（当月は含み損益込み）" + (nShow < tblMonthsIn - 1 ? "\n指定" + str.tostring(tblMonthsIn) + "ヶ月のうち" + str.tostring(tblMonthsIn - nMonths) + "ヶ月はチャート読み込み範囲外のため除外。" : "") + (hasPartial ? "\n" + partialNote : "")
-        f_pnlCell(pnlTbl, r, sumLabel, f_pnlAmt(sumAcc), pnlHeaderBg, f_pnlAmtColor(sumAcc), 1, 3, sumTip)
+        f_pnlCell(pnlTbl, r, sumLabel, f_pnlAmt(sumAcc), pnlTotalBg, f_pnlAmtColor(sumAcc), 1, 3, sumTip)
         r += 1
 
 // ── アラート ──
