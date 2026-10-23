@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart Volume Flow OBV [3935P]  v1.16  （旧名: OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart OBV [3935P]  v1.17  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回修正】v1.16: ⑥「SLドテン後ロック」の既定値を「Z/クロスのみ」→「Z/クロス＋BB復帰」に変更（ユーザー指定）。根拠: XAUUSD 15分足 2025/12〜2026/10（約200件、テーブル集計・インサンプル）でOFF/Z/Z＋BBのうちPF1.84・実現¥5.77M・最大DD−¥0.49M・赤字月0がいずれも最良。ロジック変更なし。
+// 【今回修正】v1.17: 名称を「Smart OBV」に変更（インジ名・テーブル見出し）。アラートの既定メッセージを「【BUY/SELL/EXIT/SL】 Smart OBV, ${{close}}」形式に変更。SLドテンのアラートを「SL→BUY」「SL→SELL」の2つに分割。ロジック変更なし。
+// 【前版(v1.16)で修正】v1.16: ⑥「SLドテン後ロック」の既定値を「Z/クロスのみ」→「Z/クロス＋BB復帰」に変更（ユーザー指定）。根拠: XAUUSD 15分足 2025/12〜2026/10（約200件、テーブル集計・インサンプル）でOFF/Z/Z＋BBのうちPF1.84・実現¥5.77M・最大DD−¥0.49M・赤字月0がいずれも最良。ロジック変更なし。
 // 【前版(v1.15)で修正】v1.15: ⑤合計行の背景色をネイビー#1B2A4Aに変更（ユーザー指定。色サンプルB）。ロジック変更なし。
 // 【前版(v1.14)で修正】v1.14: ⑤月別損益の最下段に「合計Nヶ月」行を追加（表示中の月の合計。当月は含み損益込み）。チャート読み込み範囲外の月（旧「11ヶ月前」等の「-」行）は非表示に変更。最古の月（途中からの集計）に「※」表示。
 // 【前版(v1.13)で追加】v1.13: ⑥「SLドテン後ロック」を追加（既定=Z/クロスのみ）。SLドテン（バンドウォーク追随）玉は、同方向シグナルが出るまで反対方向のZ信号/クロスを無視して保有継続。「Z/クロス＋BB復帰」ならBB復帰の決済/ドテンも無視。ドテン後ロック(④)の判定式を等価に整理（④の動作は変更なし）。効果は未検証【わかりません】。
@@ -23,7 +24,7 @@
 // 【わかりません＝未検証】⑤の数値とTradingView標準Strategy/実取引との照合・SLの実約定（滑り）・BT成績（手数料/スワップ/滑りは未計上）
 //   （v1.0のBT: 単独売買シグナルとしての優位性は未確認 → 他インジの確認用推奨）
 // ============================================================================
-indicator(title="Smart Volume Flow OBV [3935P]", format=format.volume, max_labels_count=500, behind_chart=false)
+indicator(title="Smart OBV [3935P]", format=format.volume, max_labels_count=500, behind_chart=false)
 
 var cumVol = 0.
 cumVol += nz(volume)
@@ -410,7 +411,7 @@ if showTblIn and barstate.islast and not na(pnlTbl)
     float monthTotal = pnlMonthAcc + nz(unrl)
     string costNote = costIn > 0 ? "コスト" + str.tostring(costIn, "#.##") + "/往復を控除済み" : "コスト未計上"
     string unitCheck = pnlNoConvert ? syminfo.currency + "建て " + str.tostring(pnlUnits, "#.##") + "単位" : "1" + syminfo.currency + "変動=¥" + f_pnlGrouped(pnlMoneyMult)
-    string headerTip = "【Smart Volume Flow OBV 簡易シミュレーション】\nエントリー: BUY/SELL確定足の終値（ドテン時は反対売買で建て直し）\n決済: EXIT確定足の終値（SL時はSL価格/ギャップは始値）\n\n※ロット固定。" + costNote + "。手数料・スワップ・滑りは未計上。\n※TradingView標準Strategyや実取引との数値照合は未実施【わかりません】。\n\n" + unitCheck + " [" + pnlRateSrc + "]"
+    string headerTip = "【Smart OBV 簡易シミュレーション】\nエントリー: BUY/SELL確定足の終値（ドテン時は反対売買で建て直し）\n決済: EXIT確定足の終値（SL時はSL価格/ギャップは始値）\n\n※ロット固定。" + costNote + "。手数料・スワップ・滑りは未計上。\n※TradingView標準Strategyや実取引との数値照合は未実施【わかりません】。\n\n" + unitCheck + " [" + pnlRateSrc + "]"
     string posLabel = pos == 1 ? "Long" : pos == -1 ? "Short" : "Flat"
     color  posBg = pos == 1 ? pnlLongBg : pos == -1 ? pnlShortBg : pnlRowBg2
     color  posTx = pos == 1 ? pnlPosStrong : pos == -1 ? pnlNegStrong : pnlTextColor
@@ -421,7 +422,7 @@ if showTblIn and barstate.islast and not na(pnlTbl)
     string posValTip = "ロング=緑背景／ショート=赤背景／ノーポジ=灰背景\n\n【直近" + str.tostring(nT) + "/" + str.tostring(tblMaxTradesIn) + "件】\n勝率 " + (decided > 0 ? str.tostring(winRate, "#.#") + "%" : "-") + " ／ PF " + (na(pf) ? "-" : str.tostring(pf, "#.##")) + "\n実現損益 " + f_pnlAmt(realized) + " ／ 最大DD " + (nT > 0 ? f_pnlAmt(-mdd) : "-") + "\n" + unitCheck + " [" + pnlRateSrc + "]"
     int r = 0
     if not tblCompactIn
-        table.cell(pnlTbl, 0, r, "Smart Volume Flow OBV損益 直近" + str.tostring(nT) + "/" + str.tostring(tblMaxTradesIn) + "件 ｜ " + unitCheck + " [" + pnlRateSrc + "]", bgcolor = pnlHeaderBg, text_color = color.white, text_size = f_pnlSz(1), tooltip = headerTip)
+        table.cell(pnlTbl, 0, r, "Smart OBV損益 直近" + str.tostring(nT) + "/" + str.tostring(tblMaxTradesIn) + "件 ｜ " + unitCheck + " [" + pnlRateSrc + "]", bgcolor = pnlHeaderBg, text_color = color.white, text_size = f_pnlSz(1), tooltip = headerTip)
         table.cell(pnlTbl, 1, r, "", bgcolor = pnlHeaderBg, text_size = f_pnlSz(1))
         table.merge_cells(pnlTbl, 0, r, 1, r)
         r += 1
@@ -478,8 +479,9 @@ if showTblIn and barstate.islast and not na(pnlTbl)
 color barCol = barModeIn == "なし" ? na : pos == 1 ? barLongColIn : pos == -1 ? barShortColIn : barModeIn == "ロング/ショート/ノーポジ" ? barFlatColIn : na
 barcolor(barCol, title="ポジション連動バー色")
 
-alertcondition(buySig, "OBV BUY", "{{ticker}} Smart Volume Flow OBV BUY（確定足）")
-alertcondition(sellSig, "OBV SELL", "{{ticker}} Smart Volume Flow OBV SELL（確定足）")
-alertcondition(exitSig, "OBV EXIT", "{{ticker}} Smart Volume Flow OBV 決済（確定足）")
-alertcondition(slHit, "OBV SL", "{{ticker}} Smart Volume Flow OBV SL決済（確定足）")
-alertcondition(slRev, "OBV SLドテン", "{{ticker}} Smart Volume Flow OBV SLドテン（BB復帰ドテン玉のSL→反対建玉、確定足）")
+alertcondition(buySig, "OBV BUY", "【BUY】 Smart OBV, ${{close}}")
+alertcondition(sellSig, "OBV SELL", "【SELL】 Smart OBV, ${{close}}")
+alertcondition(exitSig, "OBV EXIT", "【EXIT】 Smart OBV, ${{close}}")
+alertcondition(slHit, "OBV SL", "【SL】 Smart OBV, ${{close}}")
+alertcondition(slRev and pos == 1, "OBV SL→BUY", "【SL→BUY】 Smart OBV, ${{close}}")
+alertcondition(slRev and pos == -1, "OBV SL→SELL", "【SL→SELL】 Smart OBV, ${{close}}")
