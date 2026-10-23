@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart OBV [3935P]  v1.17  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart OBV [3935P]  v1.18  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回修正】v1.17: 名称を「Smart OBV」に変更（インジ名・テーブル見出し）。アラートの既定メッセージを「【BUY/SELL/EXIT/SL】 Smart OBV, ${{close}}」形式に変更。SLドテンのアラートを「SL→BUY」「SL→SELL」の2つに分割。ロジック変更なし。
+// 【今回修正】v1.18: ①アラートを1本のalert()に集約（条件「Any alert() function call」1つで全通知。種類: BUY/SELL/BUY・ドテン/SELL・ドテン/SL→BUY/SL→SELL/EXIT/SL。⑦でエントリー/決済のみをON/OFF）。alertcondition 6本は廃止。②⑤に「推奨ロット（ATR連動）」行を追加（表示のみ。許容損失÷(SL幅×ATR＋コスト)×数量×レート）。ロジック変更なし。
+// 【前版(v1.17)で修正】v1.17: 名称を「Smart OBV」に変更（インジ名・テーブル見出し）。アラートの既定メッセージを「【BUY/SELL/EXIT/SL】 Smart OBV, ${{close}}」形式に変更。SLドテンのアラートを「SL→BUY」「SL→SELL」の2つに分割。ロジック変更なし。
 // 【前版(v1.16)で修正】v1.16: ⑥「SLドテン後ロック」の既定値を「Z/クロスのみ」→「Z/クロス＋BB復帰」に変更（ユーザー指定）。根拠: XAUUSD 15分足 2025/12〜2026/10（約200件、テーブル集計・インサンプル）でOFF/Z/Z＋BBのうちPF1.84・実現¥5.77M・最大DD−¥0.49M・赤字月0がいずれも最良。ロジック変更なし。
 // 【前版(v1.15)で修正】v1.15: ⑤合計行の背景色をネイビー#1B2A4Aに変更（ユーザー指定。色サンプルB）。ロジック変更なし。
 // 【前版(v1.14)で修正】v1.14: ⑤月別損益の最下段に「合計Nヶ月」行を追加（表示中の月の合計。当月は含み損益込み）。チャート読み込み範囲外の月（旧「11ヶ月前」等の「-」行）は非表示に変更。最古の月（途中からの集計）に「※」表示。
@@ -85,6 +86,9 @@ lotsIn      = input.float(10.0, "ロット数", minval=0.000001, step=1.0, group
 contractIn  = input.float(1.0, "1ロットの数量", minval=0.000001, step=1.0, group=G5, inline="lot", tooltip="1ロットが何単位か。XAUUSD CFDはブローカーの契約仕様を必ず確認してください。")
 rateModeIn  = input.string("自動取得", "円換算", options=["自動取得", "手動指定", "換算しない"], group=G5, inline="fx")
 manualRateIn = input.float(150.0, "手動レート", minval=0.000001, step=0.1, group=G5, inline="fx", tooltip="『手動指定』時のみ使用（1建値通貨=X円）。円建て銘柄は自動で1.0。")
+showLotIn   = input.bool(true, "推奨ロット（ATR連動）を表示", group=G5, tooltip="表示のみ（損益テーブルの計算は上の「ロット数」固定のまま）。\nSLにかかった時の損失が「1トレードの許容損失」になるロット数＝許容損失 ÷ ((SL幅×ATR＋コスト)×1ロットの数量×円換算レート)。\nATRは現在足のSL用ATR（未確定足の値を含む）。ロット刻みで切り捨て。")
+riskJpyIn   = input.float(50000, "1トレードの許容損失（円）", minval=1, step=1000, group=G5, inline="rk")
+lotStepIn   = input.float(1.0, "ロット刻み", minval=0.000001, step=0.1, group=G5, inline="rk", tooltip="推奨ロットをこの刻みで切り捨て。ブローカーの最小取引単位に合わせてください（OANDA証券の金CFDの最小単位は要確認）。『換算しない』選択時は許容損失を建値通貨として扱う。")
 
 // ── ⑥ 逆行対策SL ──
 G6 = "⑥ 逆行対策SL"
@@ -97,6 +101,11 @@ slRevDotIn = input.bool(true, "BB復帰ドテン玉がSLにかかったらドテ
 slRevLockIn = input.string("Z/クロス＋BB復帰", "SLドテン後ロック", options=["なし", "Z/クロスのみ", "Z/クロス＋BB復帰"], group=G6, tooltip="SLドテンで建てた玉（バンドウォークへの追随）を、同方向のシグナル（Z信号/原型クロス）が出るまでロックして保有継続する。同方向シグナルが出るか、SL等でノーポジになったら解除。\nZ/クロスのみ: 反対方向のZ信号/クロス（決済・ドテン）を無視。BB復帰の決済/ドテンは有効（バンドウォーク終了＝バンド内へ戻った時点で手仕舞い）。\nZ/クロス＋BB復帰: BB復帰の決済/ドテンも無視（決済はSLまたは同方向シグナルでの解除後）。\nなし: v1.12と同一（ロックなし）。\n※効果は未検証【わかりません】。")
 bool slRevLockZ  = slRevLockIn != "なし"
 bool slRevLockBB = slRevLockIn == "Z/クロス＋BB復帰"
+
+// ── ⑦ アラート ──
+G7 = "⑦ アラート（1回の設定で全通知）"
+alertEntIn  = input.bool(true, "エントリーを通知（BUY/SELL/ドテン/SL→）", group=G7, tooltip="アラート作成時に条件で「Any alert() function call（alert()関数の呼び出しすべて）」を選ぶだけで、全種類がこの1つのアラートで届く（確定足で1回）。\nメッセージ例: 【BUY】 Smart OBV, $4023.675\n【BUY】新規買い／【BUY・ドテン】売り決済→買い／【SL→BUY】SLで売り決済→買い（価格はSL約定値）\n【SELL】【SELL・ドテン】【SL→SELL】も同様。")
+alertExitIn = input.bool(true, "決済のみを通知（EXIT/SL）", group=G7, tooltip="【EXIT】シグナルで決済してノーポジ／【SL】SLで決済してノーポジ（価格はSL約定値）。")
 
 // ── 計算（ta.* は全てグローバル・無条件） ──
 src = close
@@ -360,7 +369,7 @@ f_pnlCell(table t, int r, string k, string v, color bg, color vc, int ksz, int v
     true
 
 string pnlTablePos = tblPosIn == "右上" ? position.top_right : tblPosIn == "中上" ? position.top_center : tblPosIn == "左上" ? position.top_left : tblPosIn == "右中" ? position.middle_right : tblPosIn == "中央" ? position.middle_center : tblPosIn == "左中" ? position.middle_left : tblPosIn == "右下" ? position.bottom_right : tblPosIn == "中下" ? position.bottom_center : position.bottom_left
-int pnlTblRows = (tblCompactIn ? 3 : 10) + tblMonthsIn + 1
+int pnlTblRows = (tblCompactIn ? 3 : 10) + tblMonthsIn + 1 + (showLotIn ? 1 : 0)
 
 // force_overlayはconst boolのため、入力値で2通りのtable.new()を呼び分ける
 var table pnlTbl = na
@@ -444,6 +453,18 @@ if showTblIn and barstate.islast and not na(pnlTbl)
     r += 1
     f_pnlCell(pnlTbl, r, "含み損益", pos == 0 or na(unrl) ? "-" : f_pnlAmt(unrl), f_pnlBg(unrl), na(unrl) ? pnlTextColor : unrl >= 0 ? pnlPosStrong : pnlNegStrong, 2, 3, pos == 0 ? "ノーポジション" : str.tostring(unrlPt, format.mintick) + " × " + str.tostring(pnlMoneyMult, "#.##") + " 円")
     r += 1
+    if showLotIn
+        float lotFx     = pnlNoConvert ? 1.0 : pnlRate
+        float lotRiskPt = slMultIn * atrSL + costIn
+        float lotRisk1  = lotRiskPt * contractIn * lotFx
+        float lotRaw    = lotRisk1 > 0 ? riskJpyIn / lotRisk1 : na
+        float lotRec    = na(lotRaw) ? na : math.floor(lotRaw / lotStepIn) * lotStepIn
+        float lotRiskPtD = slMultDotIn * atrSL + costIn
+        float lotRecD   = lotRiskPtD > 0 ? math.floor(riskJpyIn / (lotRiskPtD * contractIn * lotFx) / lotStepIn) * lotStepIn : na
+        string lotTxt   = na(lotRec) ? "-" : lotRec <= 0 ? "最小未満" : str.tostring(lotRec, "#.######") + (slMultDotIn != slMultIn ? " / ドテン" + str.tostring(lotRecD, "#.######") : "")
+        string lotTip   = "【表示のみ】SL時の損失≈許容損失になるロット数\nATR(" + str.tostring(atrSLLenIn) + ") " + str.tostring(atrSL, format.mintick) + " × SL幅" + str.tostring(slMultIn, "#.##") + " ＋ コスト" + str.tostring(costIn, "#.##") + " = " + str.tostring(lotRiskPt, "#.##") + "（建値通貨）\n1ロット(" + str.tostring(contractIn, "#.##") + "単位)のSL時損失 ≈ " + f_pnlAmt(lotRisk1) + "\n許容損失 " + f_pnlAmt(riskJpyIn) + " ÷ " + f_pnlAmt(lotRisk1) + " = " + str.tostring(lotRaw, "#.##") + " → 刻み" + str.tostring(lotStepIn, "#.######") + "で切り捨て\n\n参考: 現在の固定ロット" + str.tostring(lotsIn, "#.##") + "ならSL時損失 ≈ " + f_pnlAmt(lotRisk1 * lotsIn) + (slMultDotIn != slMultIn ? "\n※BB復帰ドテン時はSL幅" + str.tostring(slMultDotIn, "#.##") + "で計算した値を「/ ドテン」に表示" : "")
+        f_pnlCell(pnlTbl, r, "推奨ロット\n(ATR連動)", lotTxt, pnlRowBg2, pnlTextColor, 1, 3, lotTip)
+        r += 1
     f_pnlCell(pnlTbl, r, thisMonthLabel, f_pnlAmt(monthTotal), pnlRowBg1, f_pnlAmtColor(monthTotal), 1, 3, thisMonthTip)
     r += 1
     // 過去月（k=0:先月 …）。読み込み範囲内にデータがある月だけ表示（範囲外の月は行を出さない）
@@ -479,9 +500,20 @@ if showTblIn and barstate.islast and not na(pnlTbl)
 color barCol = barModeIn == "なし" ? na : pos == 1 ? barLongColIn : pos == -1 ? barShortColIn : barModeIn == "ロング/ショート/ノーポジ" ? barFlatColIn : na
 barcolor(barCol, title="ポジション連動バー色")
 
-alertcondition(buySig, "OBV BUY", "【BUY】 Smart OBV, ${{close}}")
-alertcondition(sellSig, "OBV SELL", "【SELL】 Smart OBV, ${{close}}")
-alertcondition(exitSig, "OBV EXIT", "【EXIT】 Smart OBV, ${{close}}")
-alertcondition(slHit, "OBV SL", "【SL】 Smart OBV, ${{close}}")
-alertcondition(slRev and pos == 1, "OBV SL→BUY", "【SL→BUY】 Smart OBV, ${{close}}")
-alertcondition(slRev and pos == -1, "OBV SL→SELL", "【SL→SELL】 Smart OBV, ${{close}}")
+// 1本のalert()に集約（条件「Any alert() function call」で全種類を受信）。1足につき1通、確定足のみ
+string alTag = ""
+float  alPx  = na
+if slHit and pos != 0 and alertEntIn
+    alTag := pos == 1 ? "SL→BUY" : "SL→SELL"
+    alPx  := entryPx
+else if buySig and alertEntIn
+    alTag := refPos == -1 ? "BUY・ドテン" : "BUY"
+    alPx  := close
+else if sellSig and alertEntIn
+    alTag := refPos == 1 ? "SELL・ドテン" : "SELL"
+    alPx  := close
+else if pos == 0 and prevPos != 0 and alertExitIn
+    alTag := slHit ? "SL" : "EXIT"
+    alPx  := slHit ? slFill : close
+if alTag != "" and barstate.isconfirmed
+    alert("【" + alTag + "】 Smart OBV, $" + str.tostring(alPx, format.mintick), alert.freq_once_per_bar_close)
