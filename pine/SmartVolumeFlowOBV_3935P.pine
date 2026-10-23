@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart Volume Flow OBV [3935P]  v1.11  （旧名: OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart Volume Flow OBV [3935P]  v1.12  （旧名: OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回追加】v1.11: ⑥「BB復帰ドテン時のSL幅（ATR倍）」を追加（BB復帰ドテンで建てた玉だけ別のSL幅。Z信号/原型クロスの建玉は従来の「SL幅」）。既定5.0＝従来と同一動作。小さい値の優位性は未検証【わかりません】。
+// 【今回追加】v1.12: ⑥「BB復帰ドテン玉がSLにかかったらドテン」を追加（既定ON）。SL約定価格で反対方向に建て直し、新SLは通常の「SL幅」でSL約定価格基準。SLドテン玉の次のSLはノーポジ（連鎖なし）。SLドテン足の他シグナルは無視。ラベル「SL→BUY/SL→SELL」・アラート「OBV SLドテン」追加。効果は未検証【わかりません】。
+// 【前版(v1.11)で追加】v1.11: ⑥「BB復帰ドテン時のSL幅（ATR倍）」を追加（BB復帰ドテンで建てた玉だけ別のSL幅。Z信号/原型クロスの建玉は従来の「SL幅」）。既定5.0＝従来と同一動作。小さい値の優位性は未検証【わかりません】。
 // 【前版(v1.10)で修正】v1.10: ⑤「表示する月数」を1〜3 → 1〜12に拡張（過去月の損益を配列で最大11ヶ月保持。月の区切り・計上方法は従来と同一）。読み込み範囲外の月は「-」表示。
 // 【前版(v1.9)で修正】v1.9: 既定値をユーザー指定に変更（ラベル標準/BUY緑#56AE58・SELL赤#E93E48(文字白)/EXIT黄#FBEB54(文字黒)/バー色 ロング#3EA59A・ショート#E75753・ノーポジ#DBDBDB、バーカラー=ロング/ショート/ノーポジ）。コスト控除 0.3→0.5（OANDA XAUUSD観測スプレッド0.23〜0.58USDに基づく概算。往復=スプレッド1回分）。【今回追加】ラベルにカーソルを合わせると決済損益の計算（建値→決済、値幅−コスト、×数量×為替＝金額）をツールチップ表示。
 // 【前版(v1.8)で追加】v1.8: ③表示にラベルサイズ(5段階)・BUY/SELL/EXITのラベル色/文字色・バーカラー(ポジション連動: ロング/ショート/ノーポジ色)を追加。メインチャートのBUY/SELL/EXITは常にラベル表示（EXITのxcross図形は廃止、損益併記OFFでも文字サイズ・色が反映）。テーブル/ラベル/SLラインをローソク足の前面に表示(behind_chart=false。テーブルはスクリプト内では常に最前面、他インジとの前後はインジの「…」→表示順で変更)。ロジック変更なし。barcolor/ラベルのチャート上での見え方は要確認。
@@ -82,11 +83,12 @@ manualRateIn = input.float(150.0, "手動レート", minval=0.000001, step=0.1, 
 
 // ── ⑥ 逆行対策SL ──
 G6 = "⑥ 逆行対策SL"
-useSLIn = input.bool(true, "ATR倍の損切りSLを使う", group=G6, tooltip="建玉足の終値 ∓ ATR×倍率 をSLとし、以降の確定足の高値/安値が触れたら決済（ギャップは始値で約定）。SL後はノーポジになり、次の新規シグナルまで待機（ドテン後ロックも解除）。\nOFF: SLなし（v1.4と同一）。\n【検証】OBV Z Sweep SL v1.1（XAUUSD）: 15分足 全条件平均の最大DDが約半分、5分足でもDD低下。純損益は15分足で改善、5分足は中立〜微減。")
+useSLIn = input.bool(true, "ATR倍の損切りSLを使う", group=G6, tooltip="建玉足の終値 ∓ ATR×倍率 をSLとし、以降の確定足の高値/安値が触れたら決済（ギャップは始値で約定）。SL後はノーポジになり、次の新規シグナルまで待機（ドテン後ロックも解除）。※BB復帰ドテン玉は下の「SLにかかったらドテン」ONで反対建玉。\nOFF: SLなし（v1.4と同一）。\n【検証】OBV Z Sweep SL v1.1（XAUUSD）: 15分足 全条件平均の最大DDが約半分、5分足でもDD低下。純損益は15分足で改善、5分足は中立〜微減。")
 atrSLLenIn = input.int(14, "SL用ATR期間", minval=1, group=G6)
 showSLLineIn = input.bool(true, "SLラインをチャートに表示", group=G6, tooltip="建玉中のSL価格を価格チャート上に赤線で表示（建玉足〜決済足の手前まで）。SLを使う（上のON）場合のみ表示。")
 slMultIn   = input.float(5.0, "SL幅（ATR倍）", minval=0.1, step=0.5, group=G6, tooltip="検証値: 1.5 / 2.5 / 4.0（既定5.0は未検証）。広いほど15分足の純損益は伸びたが、DDは狭い方が小さい傾向。\n※BB復帰ドテンの建玉には下の「BB復帰ドテン時のSL幅」を使用。")
 slMultDotIn = input.float(5.0, "BB復帰ドテン時のSL幅（ATR倍）", minval=0.1, step=0.5, group=G6, tooltip="④BB復帰でドテンした建玉にだけ適用するSL幅。Z信号/原型クロスで建てた玉は上の「SL幅」。\n既定5.0＝上と同じ（従来動作）。BB復帰ドテンは逆張り寄りのため小さくする案があるが未検証【わかりません】。\n比較方法: 値を変えて⑤の月別損益（最大12ヶ月）・最大DDを見比べる（※同一期間での比較＝インサンプル）。")
+slRevDotIn = input.bool(true, "BB復帰ドテン玉がSLにかかったらドテン", group=G6, tooltip="ON: ④BB復帰ドテンで建てた玉がSLにかかったら、ノーポジにせずSL約定価格で反対方向に建て直す（ストップ&リバース）。\n・建て直した玉のSLは上の「SL幅」で、SL約定価格を基準に設定。この玉がSLにかかった場合はノーポジ（連鎖ドテンなし）。\n・「方向」設定で禁止された向きへはドテンせずノーポジ。\n・SLドテンした足では、同じ足の他のシグナル（Z信号/クロス/BB復帰）は無視。\nOFF: 従来どおりSL後はノーポジ。\n※効果は未検証【わかりません】。")
 
 // ── 計算（ta.* は全てグローバル・無条件） ──
 src = close
@@ -128,9 +130,13 @@ int prevPos = pos
 var float slPrice = na
 bool slHit = useSLIn and barstate.isconfirmed and not na(slPrice) and ((pos == 1 and low <= slPrice) or (pos == -1 and high >= slPrice))
 float slFill = na
+// SLドテン: BB復帰ドテンで建てた玉のSL時のみ、SL約定価格で反対方向に建て直す
+var bool posFromDot = false
+bool slRev = false
 if slHit
     slFill := pos == 1 ? math.min(open, slPrice) : math.max(open, slPrice)
-    pos := 0
+    slRev := slRevDotIn and posFromDot and ((pos == 1 and dirIn != "ロングのみ") or (pos == -1 and dirIn != "ショートのみ"))
+    pos := slRev ? -pos : 0
     skipFlag := false
 
 // ドテン後ロック: 同方向シグナルが出るまで反対方向シグナルを無効化
@@ -138,13 +144,14 @@ bool oppSig  = (pos == -1 and rawLong) or (pos == 1 and rawShort)
 bool sameSig = (pos == -1 and rawShort) or (pos == 1 and rawLong)
 bool skipNow = skipAfterDotIn and skipFlag and oppSig
 
-bool entL = rawLong and not skipNow and (not useTrendIn or close > trendEma) and dirIn != "ショートのみ"
-bool entS = rawShort and not skipNow and (not useTrendIn or close < trendEma) and dirIn != "ロングのみ"
-bool exitL = rawShort and pos == 1 and not entS and not skipNow
-bool exitS = rawLong and pos == -1 and not entL and not skipNow
+// SLドテンした足は他のシグナルを無視（not slRev）
+bool entL = rawLong and not skipNow and not slRev and (not useTrendIn or close > trendEma) and dirIn != "ショートのみ"
+bool entS = rawShort and not skipNow and not slRev and (not useTrendIn or close < trendEma) and dirIn != "ロングのみ"
+bool exitL = rawShort and pos == 1 and not entS and not skipNow and not slRev
+bool exitS = rawLong and pos == -1 and not entL and not skipNow and not slRev
 
 // BBタッチ→復帰（エントリー/生シグナルと同バーの場合は従来シグナルを優先）
-bool bandOn  = isBB and bandActIn != "なし" and barstate.isconfirmed
+bool bandOn  = isBB and bandActIn != "なし" and barstate.isconfirmed and not slRev
 bool bandExL = bandOn and bandRetUp and pos == 1  and not entL and not entS and not exitL
 bool bandExS = bandOn and bandRetLo and pos == -1 and not entL and not entS and not exitS
 bool dotS = bandExL and bandActIn == "ドテン" and dirIn != "ロングのみ"
@@ -164,15 +171,22 @@ else if sameSig or pos == 0
 
 // SL価格の更新（新規/ドテン/SL後の再エントリー時にセット、ノーポジでクリア）
 int refPos = slHit ? 0 : prevPos
+float entryPx = slRev ? slFill : close
 if not useSLIn or pos == 0
     slPrice := na
 else if pos != refPos
     float slMultNow = dotL or dotS ? slMultDotIn : slMultIn
-    slPrice := pos == 1 ? close - slMultNow * atrSL : close + slMultNow * atrSL
+    slPrice := pos == 1 ? entryPx - slMultNow * atrSL : entryPx + slMultNow * atrSL
+
+// 建玉の由来（BB復帰ドテン玉か）。SLドテン玉はfalse＝次のSLはノーポジ（連鎖なし）
+if pos == 0
+    posFromDot := false
+else if pos != refPos
+    posFromDot := dotL or dotS
 
 // 同方向の重複シグナルは非表示（SL直後の再エントリーは新規扱いで表示）
-bool buySig  = (entL and refPos != 1) or dotL
-bool sellSig = (entS and refPos != -1) or dotS
+bool buySig  = (entL and refPos != 1) or dotL or (slRev and pos == 1)
+bool sellSig = (entS and refPos != -1) or dotS or (slRev and pos == -1)
 bool exitSig = pos == 0 and prevPos != 0 and showExitIn
 
 // ── プロット ──
@@ -276,7 +290,7 @@ if pos != prevPos or slHit
             array.shift(pnlMoneyArr)
             array.shift(pnlDirArr)
     if pos != 0
-        pnlEntry := close
+        pnlEntry := entryPx
         pnlEntryTime := time
     else
         pnlEntry := na
@@ -288,15 +302,15 @@ f_sgn(float v) =>
 
 string pnlRateTxt = pnlNoConvert ? syminfo.currency : "¥" + str.tostring(pnlRate, "#.##") + "/" + syminfo.currency
 string closeTip = na(closedPnl) ? "" : "【決済損益の計算】\n" + (closedDir == 1 ? "ロング " : "ショート ") + str.tostring(closedEntry, format.mintick) + " → " + str.tostring(closedExit, format.mintick) + (slHit ? "（SL約定）" : "（確定足終値）") + "\n値幅 " + f_sgn(closedPt) + " − コスト " + str.tostring(costIn, "#.##") + " = " + f_sgn(closedPt - costIn) + "\n× " + str.tostring(pnlUnits, "#.##") + "単位" + (pnlNoConvert ? "" : " × " + pnlRateTxt) + "\n= " + f_pnlAmt(closedPnl)
-string entTip = "エントリー " + str.tostring(close, format.mintick) + (na(slPrice) ? "" : "／SL " + str.tostring(slPrice, format.mintick))
+string entTip = (slRev ? "SLドテン " : "") + "エントリー " + str.tostring(entryPx, format.mintick) + (na(slPrice) ? "" : "／SL " + str.tostring(slPrice, format.mintick))
 string newTip = na(closedPnl) ? entTip : closeTip + "\n新規: " + entTip
 string pnlTxt = not showPnlLblIn or na(closedPnl) ? "" : "\n" + (slHit ? "SL " : "") + f_pnlAmt(closedPnl)
 string lblSz = lblSizeIn == "極小" ? size.tiny : lblSizeIn == "小" ? size.small : lblSizeIn == "標準" ? size.normal : lblSizeIn == "大" ? size.large : size.huge
 if showMainIn
     if buySig
-        label.new(bar_index, low, "BUY" + pnlTxt, tooltip=newTip, yloc=yloc.belowbar, style=label.style_label_up, color=buyLblColIn, textcolor=buyTxtColIn, size=lblSz, force_overlay=true)
+        label.new(bar_index, low, (slRev ? "SL→BUY" : "BUY") + pnlTxt, tooltip=newTip, yloc=yloc.belowbar, style=label.style_label_up, color=buyLblColIn, textcolor=buyTxtColIn, size=lblSz, force_overlay=true)
     if sellSig
-        label.new(bar_index, high, "SELL" + pnlTxt, tooltip=newTip, yloc=yloc.abovebar, style=label.style_label_down, color=sellLblColIn, textcolor=sellTxtColIn, size=lblSz, force_overlay=true)
+        label.new(bar_index, high, (slRev ? "SL→SELL" : "SELL") + pnlTxt, tooltip=newTip, yloc=yloc.abovebar, style=label.style_label_down, color=sellLblColIn, textcolor=sellTxtColIn, size=lblSz, force_overlay=true)
     if exitSig
         label.new(bar_index, high, (slHit ? "SL" : "EXIT") + pnlTxt, tooltip=closeTip, yloc=yloc.abovebar, style=label.style_label_down, color=exitLblColIn, textcolor=exitTxtColIn, size=lblSz, force_overlay=true)
 
@@ -438,3 +452,4 @@ alertcondition(buySig, "OBV BUY", "{{ticker}} Smart Volume Flow OBV BUY（確定
 alertcondition(sellSig, "OBV SELL", "{{ticker}} Smart Volume Flow OBV SELL（確定足）")
 alertcondition(exitSig, "OBV EXIT", "{{ticker}} Smart Volume Flow OBV 決済（確定足）")
 alertcondition(slHit, "OBV SL", "{{ticker}} Smart Volume Flow OBV SL決済（確定足）")
+alertcondition(slRev, "OBV SLドテン", "{{ticker}} Smart Volume Flow OBV SLドテン（BB復帰ドテン玉のSL→反対建玉、確定足）")
