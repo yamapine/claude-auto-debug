@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart OBV [3935P]  v1.18  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart OBV [3935P]  v1.19  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回修正】v1.18: ①アラートを1本のalert()に集約（条件「Any alert() function call」1つで全通知。種類: BUY/SELL/BUY・ドテン/SELL・ドテン/SL→BUY/SL→SELL/EXIT/SL。⑦でエントリー/決済のみをON/OFF）。alertcondition 6本は廃止。②⑤に「推奨ロット（ATR連動）」行を追加（表示のみ。許容損失÷(SL幅×ATR＋コスト)×数量×レート）。ロジック変更なし。
+// 【今回修正】v1.19: アラート修正: SLドテン以外の「SL決済→同じ足で新規シグナル建玉」が【SL→BUY】と表示され価格も終値だった問題を【SL＋BUY/SELL】（末尾にSL約定値）に分離。推奨ロットの切り捨てに浮動小数誤差対策(+1e-9)。ロジック変更なし。
+// 【前版(v1.18)で修正】v1.18: ①アラートを1本のalert()に集約（条件「Any alert() function call」1つで全通知。種類: BUY/SELL/BUY・ドテン/SELL・ドテン/SL→BUY/SL→SELL/EXIT/SL。⑦でエントリー/決済のみをON/OFF）。alertcondition 6本は廃止。②⑤に「推奨ロット（ATR連動）」行を追加（表示のみ。許容損失÷(SL幅×ATR＋コスト)×数量×レート）。ロジック変更なし。
 // 【前版(v1.17)で修正】v1.17: 名称を「Smart OBV」に変更（インジ名・テーブル見出し）。アラートの既定メッセージを「【BUY/SELL/EXIT/SL】 Smart OBV, ${{close}}」形式に変更。SLドテンのアラートを「SL→BUY」「SL→SELL」の2つに分割。ロジック変更なし。
 // 【前版(v1.16)で修正】v1.16: ⑥「SLドテン後ロック」の既定値を「Z/クロスのみ」→「Z/クロス＋BB復帰」に変更（ユーザー指定）。根拠: XAUUSD 15分足 2025/12〜2026/10（約200件、テーブル集計・インサンプル）でOFF/Z/Z＋BBのうちPF1.84・実現¥5.77M・最大DD−¥0.49M・赤字月0がいずれも最良。ロジック変更なし。
 // 【前版(v1.15)で修正】v1.15: ⑤合計行の背景色をネイビー#1B2A4Aに変更（ユーザー指定。色サンプルB）。ロジック変更なし。
@@ -104,7 +105,7 @@ bool slRevLockBB = slRevLockIn == "Z/クロス＋BB復帰"
 
 // ── ⑦ アラート ──
 G7 = "⑦ アラート（1回の設定で全通知）"
-alertEntIn  = input.bool(true, "エントリーを通知（BUY/SELL/ドテン/SL→）", group=G7, tooltip="アラート作成時に条件で「Any alert() function call（alert()関数の呼び出しすべて）」を選ぶだけで、全種類がこの1つのアラートで届く（確定足で1回）。\nメッセージ例: 【BUY】 Smart OBV, $4023.675\n【BUY】新規買い／【BUY・ドテン】売り決済→買い／【SL→BUY】SLで売り決済→買い（価格はSL約定値）\n【SELL】【SELL・ドテン】【SL→SELL】も同様。")
+alertEntIn  = input.bool(true, "エントリーを通知（BUY/SELL/ドテン/SL→）", group=G7, tooltip="アラート作成時に条件で「Any alert() function call（alert()関数の呼び出しすべて）」を選ぶだけで、全種類がこの1つのアラートで届く（確定足で1回）。\nメッセージ例: 【BUY】 Smart OBV, $4023.675\n【BUY】新規買い／【BUY・ドテン】売り決済→買い／【SL→BUY】SLで売り決済→そのまま買い（SLドテン。価格はSL約定値）／【SL＋BUY】SLで決済後、同じ足の終値で新規買い（末尾にSL約定値）\n【SELL】【SELL・ドテン】【SL→SELL】も同様。")
 alertExitIn = input.bool(true, "決済のみを通知（EXIT/SL）", group=G7, tooltip="【EXIT】シグナルで決済してノーポジ／【SL】SLで決済してノーポジ（価格はSL約定値）。")
 
 // ── 計算（ta.* は全てグローバル・無条件） ──
@@ -458,9 +459,9 @@ if showTblIn and barstate.islast and not na(pnlTbl)
         float lotRiskPt = slMultIn * atrSL + costIn
         float lotRisk1  = lotRiskPt * contractIn * lotFx
         float lotRaw    = lotRisk1 > 0 ? riskJpyIn / lotRisk1 : na
-        float lotRec    = na(lotRaw) ? na : math.floor(lotRaw / lotStepIn) * lotStepIn
+        float lotRec    = na(lotRaw) ? na : math.floor(lotRaw / lotStepIn + 1e-9) * lotStepIn
         float lotRiskPtD = slMultDotIn * atrSL + costIn
-        float lotRecD   = lotRiskPtD > 0 ? math.floor(riskJpyIn / (lotRiskPtD * contractIn * lotFx) / lotStepIn) * lotStepIn : na
+        float lotRecD   = lotRiskPtD > 0 ? math.floor(riskJpyIn / (lotRiskPtD * contractIn * lotFx) / lotStepIn + 1e-9) * lotStepIn : na
         string lotTxt   = na(lotRec) ? "-" : lotRec <= 0 ? "最小未満" : str.tostring(lotRec, "#.######") + (slMultDotIn != slMultIn ? " / ドテン" + str.tostring(lotRecD, "#.######") : "")
         string lotTip   = "【表示のみ】SL時の損失≈許容損失になるロット数\nATR(" + str.tostring(atrSLLenIn) + ") " + str.tostring(atrSL, format.mintick) + " × SL幅" + str.tostring(slMultIn, "#.##") + " ＋ コスト" + str.tostring(costIn, "#.##") + " = " + str.tostring(lotRiskPt, "#.##") + "（建値通貨）\n1ロット(" + str.tostring(contractIn, "#.##") + "単位)のSL時損失 ≈ " + f_pnlAmt(lotRisk1) + "\n許容損失 " + f_pnlAmt(riskJpyIn) + " ÷ " + f_pnlAmt(lotRisk1) + " = " + str.tostring(lotRaw, "#.##") + " → 刻み" + str.tostring(lotStepIn, "#.######") + "で切り捨て\n\n参考: 現在の固定ロット" + str.tostring(lotsIn, "#.##") + "ならSL時損失 ≈ " + f_pnlAmt(lotRisk1 * lotsIn) + (slMultDotIn != slMultIn ? "\n※BB復帰ドテン時はSL幅" + str.tostring(slMultDotIn, "#.##") + "で計算した値を「/ ドテン」に表示" : "")
         f_pnlCell(pnlTbl, r, "推奨ロット\n(ATR連動)", lotTxt, pnlRowBg2, pnlTextColor, 1, 3, lotTip)
@@ -503,9 +504,15 @@ barcolor(barCol, title="ポジション連動バー色")
 // 1本のalert()に集約（条件「Any alert() function call」で全種類を受信）。1足につき1通、確定足のみ
 string alTag = ""
 float  alPx  = na
-if slHit and pos != 0 and alertEntIn
+string alSuf = ""
+if slRev and alertEntIn
     alTag := pos == 1 ? "SL→BUY" : "SL→SELL"
     alPx  := entryPx
+else if slHit and pos != 0 and alertEntIn
+    // SL決済（ノーポジ）後、同じ足の終値で新規シグナル建玉（SLドテンではない）
+    alTag := pos == 1 ? "SL＋BUY" : "SL＋SELL"
+    alPx  := close
+    alSuf := " / SL約定 $" + str.tostring(slFill, format.mintick)
 else if buySig and alertEntIn
     alTag := refPos == -1 ? "BUY・ドテン" : "BUY"
     alPx  := close
@@ -516,4 +523,4 @@ else if pos == 0 and prevPos != 0 and alertExitIn
     alTag := slHit ? "SL" : "EXIT"
     alPx  := slHit ? slFill : close
 if alTag != "" and barstate.isconfirmed
-    alert("【" + alTag + "】 Smart OBV, $" + str.tostring(alPx, format.mintick), alert.freq_once_per_bar_close)
+    alert("【" + alTag + "】 Smart OBV, $" + str.tostring(alPx, format.mintick) + alSuf, alert.freq_once_per_bar_close)
