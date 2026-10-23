@@ -1,0 +1,432 @@
+//@version=6
+// ============================================================================
+// Smart Volume Flow OBV [3935P]  v1.9  （旧名: OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
+// 【今回修正】v1.9: 既定値をユーザー指定に変更（ラベル標準/BUY緑#56AE58・SELL赤#E93E48(文字白)/EXIT黄#FBEB54(文字黒)/バー色 ロング#3EA59A・ショート#E75753・ノーポジ#DBDBDB、バーカラー=ロング/ショート/ノーポジ）。コスト控除 0.3→0.5（OANDA XAUUSD観測スプレッド0.23〜0.58USDに基づく概算。往復=スプレッド1回分）。【今回追加】ラベルにカーソルを合わせると決済損益の計算（建値→決済、値幅−コスト、×数量×為替＝金額）をツールチップ表示。
+// 【前版(v1.8)で追加】v1.8: ③表示にラベルサイズ(5段階)・BUY/SELL/EXITのラベル色/文字色・バーカラー(ポジション連動: ロング/ショート/ノーポジ色)を追加。メインチャートのBUY/SELL/EXITは常にラベル表示（EXITのxcross図形は廃止、損益併記OFFでも文字サイズ・色が反映）。テーブル/ラベル/SLラインをローソク足の前面に表示(behind_chart=false。テーブルはスクリプト内では常に最前面、他インジとの前後はインジの「…」→表示順で変更)。ロジック変更なし。barcolor/ラベルのチャート上での見え方は要確認。
+// 【前版(v1.7)で追加】v1.7: ①SLライン（建玉中のSL価格を赤線で価格チャートに表示。⑥でON/OFF）②BUY/SELL/EXITラベルに直前に決済したトレードの損益(円・コスト控除後)を併記（③でON/OFF。ドテン時=閉じた玉の損益、EXIT/SL=その決済損益）。ロジック・既定値の変更なし。
+// 【前版(v1.6)で修正】v1.6: 名称を「Smart Volume Flow OBV」に変更。既定値: コンパクト表示=OFF（フル表示）/ SL幅=5.0×ATR（ユーザー指定。検証値1.5/2.5/4.0の範囲外＝5.0は未検証【わかりません】）。ロジック変更なし。
+// 【前版(v1.5)で追加】⑥逆行対策SL（ATR倍・確定足の高値/安値で判定・ギャップは始値約定）。SL後はフラット→次の新規シグナルまで待機（ロック解除）。EXIT表示・アラート・⑤損益テーブルに反映
+//   根拠: OBV Z Sweep SL v1.1（XAUUSD 15分足 2026/1〜、5分足 7/6〜）で最大DDが低下。純損益は15分足で改善・5分足は中立。既定=ON/2.5×ATR(14)
+// 【前版(v1.4)で修正】デフォルト値: ④「BBタッチ後に戻ったら」= ドテン / 「ドテン後ロック」= ON / Zスコア閾値=3.0 / ⑤コンパクト表示=ON・位置=左下・サイズ=標準
+// 【前版(v1.4)で追加】⑤損益テーブル（簡易シミュレーション）: 当月/先月/先々月の損益(JST月区切り)・勝率・PF・期待値・最大DD・Position等
+//   売買ルール: BUY/SELLシグナル確定足の終値で建玉（ドテン時は反対売買で建て直し）、EXIT確定足の終値で決済。ロット固定・コスト控除・円換算
+//   表示位置(9通り)・サイズ(5段階)・メイン/ペイン表示・コンパクト表示・月数を入力で変更可
+//   参考元: RCI & MA Dev Reversal [3935P] v1.7.11 の⑨損益テーブル（月次集計・円換算・文字サイズ方式）
+// 【わかりません＝未検証】⑤の数値とTradingView標準Strategy/実取引との照合・SLの実約定（滑り）・BT成績（手数料/スワップ/滑りは未計上）
+//   （v1.0のBT: 単独売買シグナルとしての優位性は未確認 → 他インジの確認用推奨）
+// ============================================================================
+indicator(title="Smart Volume Flow OBV [3935P]", format=format.volume, max_labels_count=500, behind_chart=false)
+
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+
+// ── ① 平滑MA ──
+GRP = "① 平滑MA"
+TT_BB = "「+ Bollinger Bands」選択時のみ有効。MA（SMA/VWMA）とバンドの距離（OBVの標準偏差×この値）。"
+maTypeInput   = input.string("VWMA + Bollinger Bands", "MAタイプ", options=["SMA", "SMA + Bollinger Bands", "EMA", "SMMA (RMA)", "WMA", "VWMA", "VWMA + Bollinger Bands"], group=GRP, display=display.none)
+maLengthInput = input.int(50, "MA期間", minval=2, group=GRP, display=display.none, tooltip="BT検証値: 50 / 100（原型クロス単独ではPF<1が多数）")
+bbMultInput   = input.float(3.0, "BB標準偏差", minval=0.001, maxval=50, step=0.5, tooltip=TT_BB, group=GRP, display=display.none)
+bool isBB = maTypeInput == "SMA + Bollinger Bands" or maTypeInput == "VWMA + Bollinger Bands"
+
+// ── ② シグナル ──
+G2 = "② シグナル"
+sigModeIn = input.string("Zスコア・ヒステリシス", "方式", options=["Zスコア・ヒステリシス", "クロス(原型)"], group=G2, tooltip="Zスコア: Z=(OBV-MA)/σ。+閾値上抜け=BUY、-閾値下抜け=SELL。\nクロス(原型): OBVがMAを上抜け=BUY/下抜け=SELL")
+zLenIn    = input.int(50, "Zスコアσ期間", minval=10, group=G2)
+zThIn     = input.float(3.0, "Zスコア閾値", minval=0.1, step=0.1, group=G2)
+useTrendIn = input.bool(false, "価格トレンドフィルター（EMA）", group=G2, tooltip="BUYは終値>EMA、SELLは終値<EMAのときのみ表示。反対シグナルは決済(EXIT)として表示")
+trendLenIn = input.int(200, "トレンドEMA期間", minval=2, group=G2)
+dirIn      = input.string("両方", "方向", options=["両方", "ロングのみ", "ショートのみ"], group=G2)
+
+// ── ③ 表示 ──
+G3 = "③ 表示"
+showMainIn = input.bool(true, "メインチャートにシグナル表示", group=G3)
+showPaneIn = input.bool(true, "OBVペインにシグナル表示", group=G3)
+showExitIn = input.bool(true, "決済(EXIT)を表示", group=G3)
+showPnlLblIn = input.bool(true, "ラベルに決済損益(円)を併記", group=G3, tooltip="ON: メインチャートのBUY/SELL/EXITラベルに、そのバーで決済したトレードの損益（円、コスト控除後、⑤の設定のロット・換算に連動）を2行目に表示。\nドテン時のBUY/SELLは「閉じた玉」の損益。新規エントリーのみ（直前に決済なし）の場合は損益なし。SL決済は「SL」を付記。\nOFF: 従来のBUY/SELLラベル（損益なし）。\n※簡易シミュレーション値（滑り・手数料未計上、実取引と未照合【わかりません】）。")
+lblSizeIn = input.string("標準", "ラベルサイズ（BUY/SELL/EXIT）", options=["極小", "小", "標準", "大", "特大"], group=G3)
+buyLblColIn  = input.color(#56AE58, "BUYラベル 背景/文字", group=G3, inline="cb")
+buyTxtColIn  = input.color(#FFFFFF, "", group=G3, inline="cb")
+sellLblColIn = input.color(#E93E48, "SELLラベル 背景/文字", group=G3, inline="cs")
+sellTxtColIn = input.color(color.white, "", group=G3, inline="cs")
+exitLblColIn = input.color(#FBEB54, "EXIT/SLラベル 背景/文字", group=G3, inline="ce")
+exitTxtColIn = input.color(#000000, "", group=G3, inline="ce")
+barModeIn = input.string("ロング/ショート/ノーポジ", "バーカラー", options=["なし", "ロング/ショートのみ", "ロング/ショート/ノーポジ"], group=G3, tooltip="ポジション状態（確定足で更新）でメインチャートのローソク足の色を変更。\nなし: チャート標準の色のまま。\nロング/ショートのみ: ノーポジ中は標準色。")
+barLongColIn  = input.color(#3EA59A, "バー色 ロング/ショート/ノーポジ", group=G3, inline="bc")
+barShortColIn = input.color(#E75753, "", group=G3, inline="bc")
+barFlatColIn  = input.color(#DBDBDB, "", group=G3, inline="bc")
+
+// ── ④ BB復帰アクション ──
+G4 = "④ BB復帰アクション"
+bandActIn = input.string("ドテン", "BBタッチ後に戻ったら", options=["なし", "決済", "ドテン"], group=G4, tooltip="MAタイプが「+ Bollinger Bands」のときのみ有効。\n上バンドにタッチ(OBV≧上バンド)後、バンド内へ戻る → ロング保有中のみ作用\n下バンドにタッチ(OBV≦下バンド)後、バンド内へ戻る → ショート保有中のみ作用\n決済: ポジションを閉じる / ドテン: 反対売買に転換（「方向」設定で禁止された向きは決済になる）\nなし: 従来動作（v1.0と同一）")
+skipAfterDotIn = input.bool(true, "ドテン後ロック（同方向シグナルが出るまで反対シグナルを無効化）", group=G4, tooltip="BB復帰ドテンの後、ドテン方向と同じ向きのシグナル(Z信号/原型クロス)が出るまで、反対方向のシグナルを全て無視してポジションを維持する。\n同方向シグナルが出た時点でロック解除（そのシグナル自体は保有中の重複なので非表示）。解除後の反対シグナルは通常通り有効。\nOFF: 従来動作（v1.1と同一）")
+
+// ── ⑤ 損益テーブル ──
+G5 = "⑤ 損益テーブル（簡易シミュレーション）"
+showTblIn   = input.bool(true, "損益テーブルを表示", group=G5, tooltip="BUY/SELLシグナル確定足の終値で建玉、EXIT確定足の終値で決済したと仮定した簡易損益。ドテン時は反対売買で建て直し。ロット固定。手数料/スワップ/滑りは未計上（コスト控除欄で近似）。")
+tblOnMainIn = input.bool(true, "メインチャートに表示（OFF=このペイン内）", group=G5, tooltip="ON: メインの価格チャート上に表示（force_overlay）。OFF: このインジのペイン内に表示。※変更後に反映されない場合はインジを再読み込みしてください。")
+tblCompactIn = input.bool(false, "コンパクト表示（Position/Entry/含み損益/月別のみ）", group=G5, tooltip="ON: 見出し・勝率・PF等を省き、Position／Entry価格／含み損益／月別損益のみ表示。OFF: 勝率・PF・期待値・最大DD・買い/売り別も表示。")
+tblPosIn    = input.string("左下", "表示位置", options=["右上", "中上", "左上", "右中", "中央", "左中", "右下", "中下", "左下"], group=G5, inline="tp")
+tblSizeIn   = input.string("標準", "サイズ", options=["極小", "小", "標準", "大", "特大"], group=G5, inline="tp", tooltip="テーブル全体の文字サイズ。標準=項目名normal・値large・月別項目名small。")
+tblMonthsIn = input.int(3, "表示する月数（当月から遡る）", minval=1, maxval=3, group=G5, tooltip="3=当月・先月・先々月。月の区切りは日本時間(Asia/Tokyo)の1日0:00。決済した足の月に計上。")
+tblMaxTradesIn = input.int(100, "統計の対象（直近N件）", minval=5, maxval=500, group=G5, tooltip="勝率・PF・期待値・最大DD・買い/売り別を、直近N件のクローズ済みトレードで集計（月別損益はこの件数に依存しない）。")
+costIn      = input.float(0.5, "コスト控除（建値通貨/往復）", minval=0.0, step=0.05, group=G5, tooltip="1往復あたりのコストを建値通貨で指定（XAUUSDならUSD/oz）。CFDはスプレッドが往復で1回分（買いはAsk・売りはBidで約定、チャートはBid基準）なので、往復＝スプレッド1回分＋滑り。OANDA証券の金CFDは取引手数料無料（fxnav掲載）。\n既定0.5: TradingView上のOANDA:XAUUSD気配で観測したスプレッド0.23〜0.58USD（1pt=0.01USD仮定・少数サンプル）に基づく概算。指標時・早朝は拡大。金利調整額（スワップ）は未計上。")
+lotsIn      = input.float(10.0, "ロット数", minval=0.000001, step=1.0, group=G5, inline="lot")
+contractIn  = input.float(1.0, "1ロットの数量", minval=0.000001, step=1.0, group=G5, inline="lot", tooltip="1ロットが何単位か。XAUUSD CFDはブローカーの契約仕様を必ず確認してください。")
+rateModeIn  = input.string("自動取得", "円換算", options=["自動取得", "手動指定", "換算しない"], group=G5, inline="fx")
+manualRateIn = input.float(150.0, "手動レート", minval=0.000001, step=0.1, group=G5, inline="fx", tooltip="『手動指定』時のみ使用（1建値通貨=X円）。円建て銘柄は自動で1.0。")
+
+// ── ⑥ 逆行対策SL ──
+G6 = "⑥ 逆行対策SL"
+useSLIn = input.bool(true, "ATR倍の損切りSLを使う", group=G6, tooltip="建玉足の終値 ∓ ATR×倍率 をSLとし、以降の確定足の高値/安値が触れたら決済（ギャップは始値で約定）。SL後はノーポジになり、次の新規シグナルまで待機（ドテン後ロックも解除）。\nOFF: SLなし（v1.4と同一）。\n【検証】OBV Z Sweep SL v1.1（XAUUSD）: 15分足 全条件平均の最大DDが約半分、5分足でもDD低下。純損益は15分足で改善、5分足は中立〜微減。")
+atrSLLenIn = input.int(14, "SL用ATR期間", minval=1, group=G6)
+showSLLineIn = input.bool(true, "SLラインをチャートに表示", group=G6, tooltip="建玉中のSL価格を価格チャート上に赤線で表示（建玉足〜決済足の手前まで）。SLを使う（上のON）場合のみ表示。")
+slMultIn   = input.float(5.0, "SL幅（ATR倍）", minval=0.1, step=0.5, group=G6, tooltip="検証値: 1.5 / 2.5 / 4.0（既定5.0は未検証）。広いほど15分足の純損益は伸びたが、DDは狭い方が小さい傾向。")
+
+// ── 計算（ta.* は全てグローバル・無条件） ──
+src = close
+obv = ta.cum(math.sign(ta.change(src)) * volume)
+
+float mSMA = ta.sma(obv, maLengthInput)
+float mEMA = ta.ema(obv, maLengthInput)
+float mRMA = ta.rma(obv, maLengthInput)
+float mWMA = ta.wma(obv, maLengthInput)
+float mVW  = ta.vwma(obv, maLengthInput)
+bool isVW = maTypeInput == "VWMA" or maTypeInput == "VWMA + Bollinger Bands"
+float smoothingMA = maTypeInput == "EMA" ? mEMA : maTypeInput == "SMMA (RMA)" ? mRMA : maTypeInput == "WMA" ? mWMA : isVW ? mVW : mSMA
+float obvStdev = ta.stdev(obv, maLengthInput)
+float bbU = smoothingMA + obvStdev * bbMultInput
+float bbL = smoothingMA - obvStdev * bbMultInput
+
+float spread = obv - smoothingMA
+float sdSp   = ta.stdev(spread, zLenIn)
+float z      = sdSp > 0 ? spread / sdSp : 0.0
+bool crossUp = ta.crossover(obv, smoothingMA)
+bool crossDn = ta.crossunder(obv, smoothingMA)
+bool zUp     = ta.crossover(z, zThIn)
+bool zDn     = ta.crossunder(z, -zThIn)
+float trendEma = ta.ema(close, trendLenIn)
+float atrSL = ta.atr(atrSLLenIn)
+bool bandRetUp = ta.crossunder(obv, bbU)
+bool bandRetLo = ta.crossover(obv, bbL)
+
+bool isCross  = sigModeIn == "クロス(原型)"
+bool rawLong  = (isCross ? crossUp : zUp) and barstate.isconfirmed
+bool rawShort = (isCross ? crossDn : zDn) and barstate.isconfirmed
+
+// ── ポジション状態（新規/ドテン、反対生シグナルで決済、BB復帰で決済/ドテン） ──
+var int pos = 0
+var bool skipFlag = false
+int prevPos = pos
+
+// ⑥ SL判定（確定足の高値/安値。建玉足より後の足のみ＝slPriceは建玉時にセット）
+var float slPrice = na
+bool slHit = useSLIn and barstate.isconfirmed and not na(slPrice) and ((pos == 1 and low <= slPrice) or (pos == -1 and high >= slPrice))
+float slFill = na
+if slHit
+    slFill := pos == 1 ? math.min(open, slPrice) : math.max(open, slPrice)
+    pos := 0
+    skipFlag := false
+
+// ドテン後ロック: 同方向シグナルが出るまで反対方向シグナルを無効化
+bool oppSig  = (pos == -1 and rawLong) or (pos == 1 and rawShort)
+bool sameSig = (pos == -1 and rawShort) or (pos == 1 and rawLong)
+bool skipNow = skipAfterDotIn and skipFlag and oppSig
+
+bool entL = rawLong and not skipNow and (not useTrendIn or close > trendEma) and dirIn != "ショートのみ"
+bool entS = rawShort and not skipNow and (not useTrendIn or close < trendEma) and dirIn != "ロングのみ"
+bool exitL = rawShort and pos == 1 and not entS and not skipNow
+bool exitS = rawLong and pos == -1 and not entL and not skipNow
+
+// BBタッチ→復帰（エントリー/生シグナルと同バーの場合は従来シグナルを優先）
+bool bandOn  = isBB and bandActIn != "なし" and barstate.isconfirmed
+bool bandExL = bandOn and bandRetUp and pos == 1  and not entL and not entS and not exitL
+bool bandExS = bandOn and bandRetLo and pos == -1 and not entL and not entS and not exitS
+bool dotS = bandExL and bandActIn == "ドテン" and dirIn != "ロングのみ"
+bool dotL = bandExS and bandActIn == "ドテン" and dirIn != "ショートのみ"
+
+if entL or dotL
+    pos := 1
+else if entS or dotS
+    pos := -1
+else if exitL or exitS or bandExL or bandExS
+    pos := 0
+
+if dotL or dotS
+    skipFlag := true
+else if sameSig or pos == 0
+    skipFlag := false
+
+// SL価格の更新（新規/ドテン/SL後の再エントリー時にセット、ノーポジでクリア）
+int refPos = slHit ? 0 : prevPos
+if not useSLIn or pos == 0
+    slPrice := na
+else if pos != refPos
+    slPrice := pos == 1 ? close - slMultIn * atrSL : close + slMultIn * atrSL
+
+// 同方向の重複シグナルは非表示（SL直後の再エントリーは新規扱いで表示）
+bool buySig  = (entL and refPos != 1) or dotL
+bool sellSig = (entS and refPos != -1) or dotS
+bool exitSig = pos == 0 and prevPos != 0 and showExitIn
+
+// ── プロット ──
+plot(obv, color=#2962FF, title="OnBalanceVolume")
+plot(smoothingMA, "OBV-based MA", color=color.yellow)
+bbUpperBand = plot(bbU, title="Upper Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
+bbLowerBand = plot(bbL, title="Lower Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
+fill(bbUpperBand, bbLowerBand, color=isBB ? color.new(color.green, 90) : na, title="Bollinger Bands Background Fill", display=isBB ? display.all : display.none, editable=isBB)
+plot(z, "Zスコア", display=display.data_window)
+
+// ── シグナル（Y座標はOHLC/ペイン端に固定） ──
+plotshape(buySig and showPaneIn, "BUY(ペイン)", shape.triangleup, location.bottom, color.lime, size=size.tiny)
+plotshape(sellSig and showPaneIn, "SELL(ペイン)", shape.triangledown, location.top, color.red, size=size.tiny)
+float slPlot = pos != refPos ? na : slPrice
+plot(slPlot, "SLライン", color=color.new(color.red, 0), linewidth=1, style=plot.style_linebr, force_overlay=true, display=showSLLineIn ? display.all : display.none)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⑤ 損益テーブル（簡易シミュレーション）: 建玉・決済は上のpos状態遷移に完全連動（確定足のみ＝リペイントなし）
+//   建玉: pos が 0→±1 / 反対方向へ変化した確定足の終値 ／ 決済: pos が ±1→0 / 反対方向へ変化した確定足の終値
+// ═══════════════════════════════════════════════════════════════════════════════
+// ---- 円換算（グローバルで無条件実行） ----
+bool  pnlIsJpyQuote = syminfo.currency == "JPY"
+string pnlFxTicker  = "FX_IDC:" + syminfo.currency + "JPY"
+float pnlLiveFx     = request.security(pnlFxTicker, timeframe.period, close, ignore_invalid_symbol = true)
+float pnlBuiltinFx  = request.currency_rate(syminfo.currency, "JPY")
+bool  pnlIsManual   = rateModeIn == "手動指定"
+float pnlAutoRate   = pnlIsJpyQuote ? 1.0 : not na(pnlLiveFx) ? pnlLiveFx : pnlBuiltinFx
+float pnlRate       = pnlIsManual ? manualRateIn : pnlAutoRate
+bool  pnlNoConvert  = rateModeIn == "換算しない" or na(pnlRate)
+float pnlUnits      = lotsIn * contractIn
+float pnlMoneyMult  = pnlNoConvert ? pnlUnits : pnlUnits * pnlRate
+string pnlRateSrc   = pnlNoConvert ? "換算なし" : pnlIsManual ? "手動" : pnlIsJpyQuote ? "円建て" : not na(pnlLiveFx) ? "ライブ" : "日足参照"
+
+f_pnlGrouped(float v) =>
+    string gs = str.tostring(math.round(math.abs(v)), "#")
+    int gn = str.length(gs)
+    string out = ""
+    for gi = 0 to gn - 1
+        out := str.substring(gs, gn - 1 - gi, gn - gi) + out
+        if (gi + 1) % 3 == 0 and gi < gn - 1
+            out := "," + out
+    out
+
+f_pnlAmt(float v) =>
+    string result = "-"
+    if not na(v)
+        if pnlNoConvert
+            result := str.tostring(v, "#.##") + " " + syminfo.currency
+        else
+            result := (v < 0 ? "-¥" : "¥") + f_pnlGrouped(v)
+    result
+
+// ---- トレード記録・月次集計（JST月区切り） ----
+var array<float> pnlMoneyArr = array.new<float>(0)
+var array<int>   pnlDirArr   = array.new<int>(0)
+var float pnlEntry     = na
+var int   pnlEntryTime = na
+var int   pnlMonthKey     = na
+var float pnlMonthAcc     = 0.0
+var int   pnlMonthCnt     = 0
+var float pnlLastMonthAcc = na
+var int   pnlLastMonthCnt = na
+var int   pnlLastMonthNum = na
+var float pnlTwoAgoAcc    = na
+var int   pnlTwoAgoCnt    = na
+var int   pnlTwoAgoNum    = na
+int pnlJstYear  = year(time, "Asia/Tokyo")
+int pnlJstMonth = month(time, "Asia/Tokyo")
+int pnlCurMonthKey = pnlJstYear * 100 + pnlJstMonth
+if na(pnlMonthKey) or pnlCurMonthKey != pnlMonthKey
+    if not na(pnlMonthKey)
+        pnlTwoAgoAcc    := pnlLastMonthAcc
+        pnlTwoAgoCnt    := pnlLastMonthCnt
+        pnlTwoAgoNum    := pnlLastMonthNum
+        pnlLastMonthAcc := pnlMonthAcc
+        pnlLastMonthCnt := pnlMonthCnt
+        pnlLastMonthNum := pnlMonthKey % 100
+    pnlMonthAcc := 0.0
+    pnlMonthCnt := 0
+    pnlMonthKey := pnlCurMonthKey
+
+float closedPnl = na
+float closedEntry = na
+float closedExit = na
+float closedPt = na
+int closedDir = 0
+if pos != prevPos or slHit
+    if prevPos != 0 and not na(pnlEntry)
+        float pnlExitPx = slHit ? slFill : close
+        float pnlPt    = prevPos == 1 ? pnlExitPx - pnlEntry : pnlEntry - pnlExitPx
+        float pnlMoney = (pnlPt - costIn) * pnlMoneyMult
+        closedPnl := pnlMoney
+        closedEntry := pnlEntry
+        closedExit := pnlExitPx
+        closedPt := pnlPt
+        closedDir := prevPos
+        pnlMonthAcc += pnlMoney
+        pnlMonthCnt += 1
+        array.push(pnlMoneyArr, pnlMoney)
+        array.push(pnlDirArr, prevPos)
+        if array.size(pnlMoneyArr) > tblMaxTradesIn
+            array.shift(pnlMoneyArr)
+            array.shift(pnlDirArr)
+    if pos != 0
+        pnlEntry := close
+        pnlEntryTime := time
+    else
+        pnlEntry := na
+        pnlEntryTime := na
+
+// ---- ラベル（決済損益を併記） ----
+f_sgn(float v) =>
+    (v >= 0 ? "+" : "") + str.tostring(v, "#.##")
+
+string pnlRateTxt = pnlNoConvert ? syminfo.currency : "¥" + str.tostring(pnlRate, "#.##") + "/" + syminfo.currency
+string closeTip = na(closedPnl) ? "" : "【決済損益の計算】\n" + (closedDir == 1 ? "ロング " : "ショート ") + str.tostring(closedEntry, format.mintick) + " → " + str.tostring(closedExit, format.mintick) + (slHit ? "（SL約定）" : "（確定足終値）") + "\n値幅 " + f_sgn(closedPt) + " − コスト " + str.tostring(costIn, "#.##") + " = " + f_sgn(closedPt - costIn) + "\n× " + str.tostring(pnlUnits, "#.##") + "単位" + (pnlNoConvert ? "" : " × " + pnlRateTxt) + "\n= " + f_pnlAmt(closedPnl)
+string entTip = "エントリー " + str.tostring(close, format.mintick) + (na(slPrice) ? "" : "／SL " + str.tostring(slPrice, format.mintick))
+string newTip = na(closedPnl) ? entTip : closeTip + "\n新規: " + entTip
+string pnlTxt = not showPnlLblIn or na(closedPnl) ? "" : "\n" + (slHit ? "SL " : "") + f_pnlAmt(closedPnl)
+string lblSz = lblSizeIn == "極小" ? size.tiny : lblSizeIn == "小" ? size.small : lblSizeIn == "標準" ? size.normal : lblSizeIn == "大" ? size.large : size.huge
+if showMainIn
+    if buySig
+        label.new(bar_index, low, "BUY" + pnlTxt, tooltip=newTip, yloc=yloc.belowbar, style=label.style_label_up, color=buyLblColIn, textcolor=buyTxtColIn, size=lblSz, force_overlay=true)
+    if sellSig
+        label.new(bar_index, high, "SELL" + pnlTxt, tooltip=newTip, yloc=yloc.abovebar, style=label.style_label_down, color=sellLblColIn, textcolor=sellTxtColIn, size=lblSz, force_overlay=true)
+    if exitSig
+        label.new(bar_index, high, (slHit ? "SL" : "EXIT") + pnlTxt, tooltip=closeTip, yloc=yloc.abovebar, style=label.style_label_down, color=exitLblColIn, textcolor=exitTxtColIn, size=lblSz, force_overlay=true)
+
+// ---- 表示用の色・サイズ ----
+color pnlPosColor   = color.new(#26a69a, 0)
+color pnlNegColor   = color.new(#ef5350, 0)
+color pnlTextColor  = color.new(#c5c9d3, 0)
+color pnlHeaderBg   = color.new(#0a0d12, 0)
+color pnlRowBg1     = color.new(#12151c, 0)
+color pnlRowBg2     = color.new(#181c25, 0)
+color pnlBorder     = color.new(#242833, 0)
+color pnlLongBg     = color.new(#0f2a22, 0)
+color pnlShortBg    = color.new(#2a1414, 0)
+color pnlPosStrong  = color.new(#2ee6a1, 0)
+color pnlNegStrong  = color.new(#ff6259, 0)
+
+f_pnlAmtColor(float v) =>
+    na(v) or v == 0 ? pnlTextColor : v > 0 ? pnlPosColor : pnlNegColor
+
+f_pnlBg(float v) =>
+    na(v) or v == 0 ? pnlRowBg2 : v > 0 ? pnlLongBg : pnlShortBg
+
+int pnlSizeDelta = tblSizeIn == "極小" ? -2 : tblSizeIn == "小" ? -1 : tblSizeIn == "大" ? 1 : tblSizeIn == "特大" ? 2 : 0
+f_pnlSz(int base) =>
+    int ci = math.max(0, math.min(4, base + pnlSizeDelta))
+    ci == 0 ? size.tiny : ci == 1 ? size.small : ci == 2 ? size.normal : ci == 3 ? size.large : size.huge
+
+f_pnlCell(table t, int r, string k, string v, color bg, color vc, int ksz, int vsz, string tip) =>
+    table.cell(t, 0, r, k, bgcolor = bg, text_color = pnlTextColor, text_size = f_pnlSz(ksz))
+    table.cell(t, 1, r, v, bgcolor = bg, text_color = vc, text_size = f_pnlSz(vsz), tooltip = tip)
+    true
+
+string pnlTablePos = tblPosIn == "右上" ? position.top_right : tblPosIn == "中上" ? position.top_center : tblPosIn == "左上" ? position.top_left : tblPosIn == "右中" ? position.middle_right : tblPosIn == "中央" ? position.middle_center : tblPosIn == "左中" ? position.middle_left : tblPosIn == "右下" ? position.bottom_right : tblPosIn == "中下" ? position.bottom_center : position.bottom_left
+int pnlTblRows = (tblCompactIn ? 3 : 10) + tblMonthsIn
+
+// force_overlayはconst boolのため、入力値で2通りのtable.new()を呼び分ける
+var table pnlTbl = na
+if barstate.isfirst and showTblIn
+    if tblOnMainIn
+        pnlTbl := table.new(pnlTablePos, 2, pnlTblRows, border_width = 1, border_color = pnlBorder, frame_width = 1, frame_color = pnlBorder, force_overlay = true)
+    else
+        pnlTbl := table.new(pnlTablePos, 2, pnlTblRows, border_width = 1, border_color = pnlBorder, frame_width = 1, frame_color = pnlBorder, force_overlay = false)
+
+if showTblIn and barstate.islast and not na(pnlTbl)
+    int   nT = array.size(pnlMoneyArr)
+    float gP = 0.0
+    float gL = 0.0
+    int   wins = 0
+    int   losses = 0
+    float eq = 0.0
+    float peak = 0.0
+    float mdd = 0.0
+    float longSum = 0.0
+    float shortSum = 0.0
+    int   longN = 0
+    int   shortN = 0
+    if nT > 0
+        for i = 0 to nT - 1
+            float v = array.get(pnlMoneyArr, i)
+            if v > 0
+                gP += v
+                wins += 1
+            else if v < 0
+                gL -= v
+                losses += 1
+            eq += v
+            peak := math.max(peak, eq)
+            mdd := math.max(mdd, peak - eq)
+            if array.get(pnlDirArr, i) == 1
+                longSum += v
+                longN += 1
+            else
+                shortSum += v
+                shortN += 1
+    int   decided  = wins + losses
+    float realized = gP - gL
+    float winRate  = decided > 0 ? wins * 100.0 / decided : na
+    float pf       = gL > 0 ? gP / gL : na
+    float expMoney = nT > 0 ? realized / nT : na
+    float unrlPt   = pos == 1 ? close - pnlEntry : pos == -1 ? pnlEntry - close : 0.0
+    float unrl     = pos == 0 or na(pnlEntry) ? na : unrlPt * pnlMoneyMult
+    float monthTotal = pnlMonthAcc + nz(unrl)
+    string costNote = costIn > 0 ? "コスト" + str.tostring(costIn, "#.##") + "/往復を控除済み" : "コスト未計上"
+    string unitCheck = pnlNoConvert ? syminfo.currency + "建て " + str.tostring(pnlUnits, "#.##") + "単位" : "1" + syminfo.currency + "変動=¥" + f_pnlGrouped(pnlMoneyMult)
+    string headerTip = "【Smart Volume Flow OBV 簡易シミュレーション】\nエントリー: BUY/SELL確定足の終値（ドテン時は反対売買で建て直し）\n決済: EXIT確定足の終値（SL時はSL価格/ギャップは始値）\n\n※ロット固定。" + costNote + "。手数料・スワップ・滑りは未計上。\n※TradingView標準Strategyや実取引との数値照合は未実施【わかりません】。\n\n" + unitCheck + " [" + pnlRateSrc + "]"
+    string posLabel = pos == 1 ? "Long" : pos == -1 ? "Short" : "Flat"
+    color  posBg = pos == 1 ? pnlLongBg : pos == -1 ? pnlShortBg : pnlRowBg2
+    color  posTx = pos == 1 ? pnlPosStrong : pos == -1 ? pnlNegStrong : pnlTextColor
+    string entryLabel = pos == 0 or na(pnlEntry) ? "-" : str.tostring(pnlEntry, format.mintick)
+    string entryTip = pos == 0 or na(pnlEntryTime) ? "ポジションなし" : "エントリー日時: " + str.format_time(pnlEntryTime, "yyyy-MM-dd HH:mm", syminfo.timezone) + "\n現在値: " + str.tostring(close, format.mintick)
+    string thisMonthLabel = str.tostring(pnlJstMonth) + "月損益\n(" + str.tostring(pnlMonthCnt) + "件)"
+    string lastMonthLabel = (na(pnlLastMonthNum) ? "先月" : str.tostring(pnlLastMonthNum) + "月") + "損益\n(" + (na(pnlLastMonthCnt) ? "-" : str.tostring(pnlLastMonthCnt)) + "件)"
+    string twoAgoLabel = (na(pnlTwoAgoNum) ? "先々月" : str.tostring(pnlTwoAgoNum) + "月") + "損益\n(" + (na(pnlTwoAgoCnt) ? "-" : str.tostring(pnlTwoAgoCnt)) + "件)"
+    string thisMonthTip = "当月クローズ分の実現損益 " + f_pnlAmt(pnlMonthAcc) + " ＋ 含み損益 " + f_pnlAmt(unrl)
+    string posValTip = "ロング=緑背景／ショート=赤背景／ノーポジ=灰背景\n\n【直近" + str.tostring(nT) + "/" + str.tostring(tblMaxTradesIn) + "件】\n勝率 " + (decided > 0 ? str.tostring(winRate, "#.#") + "%" : "-") + " ／ PF " + (na(pf) ? "-" : str.tostring(pf, "#.##")) + "\n実現損益 " + f_pnlAmt(realized) + " ／ 最大DD " + (nT > 0 ? f_pnlAmt(-mdd) : "-") + "\n" + unitCheck + " [" + pnlRateSrc + "]"
+    int r = 0
+    if not tblCompactIn
+        table.cell(pnlTbl, 0, r, "Smart Volume Flow OBV損益 直近" + str.tostring(nT) + "/" + str.tostring(tblMaxTradesIn) + "件 ｜ " + unitCheck + " [" + pnlRateSrc + "]", bgcolor = pnlHeaderBg, text_color = color.white, text_size = f_pnlSz(1), tooltip = headerTip)
+        table.cell(pnlTbl, 1, r, "", bgcolor = pnlHeaderBg, text_size = f_pnlSz(1))
+        table.merge_cells(pnlTbl, 0, r, 1, r)
+        r += 1
+        f_pnlCell(pnlTbl, r, "勝率", decided > 0 ? str.tostring(winRate, "#.#") + "% (" + str.tostring(wins) + "勝" + str.tostring(losses) + "敗)" : "-", pnlRowBg1, pnlTextColor, 1, 1, "損益ゼロ " + str.tostring(nT - decided) + "件は勝敗から除外")
+        r += 1
+        f_pnlCell(pnlTbl, r, "PF", na(pf) ? "-" : str.tostring(pf, "#.##"), pnlRowBg2, na(pf) ? pnlTextColor : pf >= 1 ? pnlPosColor : pnlNegColor, 1, 1, "総利益 " + f_pnlAmt(gP) + " ÷ 総損失 " + f_pnlAmt(gL) + "\n※" + costNote)
+        r += 1
+        f_pnlCell(pnlTbl, r, "期待値/回", f_pnlAmt(expMoney), pnlRowBg1, f_pnlAmtColor(expMoney), 1, 1, "実現損益 ÷ 件数")
+        r += 1
+        f_pnlCell(pnlTbl, r, "最大DD", nT > 0 ? f_pnlAmt(-mdd) : "-", pnlRowBg2, mdd > 0 ? pnlNegColor : pnlTextColor, 1, 1, "窓内トレードの実現損益カーブのピークからの最大下落幅")
+        r += 1
+        f_pnlCell(pnlTbl, r, "実現損益", f_pnlAmt(realized), pnlRowBg1, f_pnlAmtColor(realized), 1, 2, "直近" + str.tostring(nT) + "件の合計（" + costNote + "）")
+        r += 1
+        f_pnlCell(pnlTbl, r, "買い/売り", "L " + f_pnlAmt(longSum) + " (" + str.tostring(longN) + ") / S " + f_pnlAmt(shortSum) + " (" + str.tostring(shortN) + ")", pnlRowBg2, pnlTextColor, 1, 1, "方向別の実現損益（件数）")
+        r += 1
+    f_pnlCell(pnlTbl, r, "Position", posLabel, posBg, posTx, 2, 3, tblCompactIn ? headerTip + "\n\n" + posValTip : "")
+    r += 1
+    f_pnlCell(pnlTbl, r, "Entry価格", entryLabel, pnlRowBg1, pnlTextColor, 2, 3, entryTip)
+    r += 1
+    f_pnlCell(pnlTbl, r, "含み損益", pos == 0 or na(unrl) ? "-" : f_pnlAmt(unrl), f_pnlBg(unrl), na(unrl) ? pnlTextColor : unrl >= 0 ? pnlPosStrong : pnlNegStrong, 2, 3, pos == 0 ? "ノーポジション" : str.tostring(unrlPt, format.mintick) + " × " + str.tostring(pnlMoneyMult, "#.##") + " 円")
+    r += 1
+    f_pnlCell(pnlTbl, r, thisMonthLabel, f_pnlAmt(monthTotal), pnlRowBg1, f_pnlAmtColor(monthTotal), 1, 3, thisMonthTip)
+    r += 1
+    if tblMonthsIn >= 2
+        f_pnlCell(pnlTbl, r, lastMonthLabel, f_pnlAmt(pnlLastMonthAcc), pnlRowBg2, f_pnlAmtColor(pnlLastMonthAcc), 1, 3, "先月（暦月・JST）にクローズした分の実現損益（確定値）")
+        r += 1
+    if tblMonthsIn >= 3
+        f_pnlCell(pnlTbl, r, twoAgoLabel, f_pnlAmt(pnlTwoAgoAcc), pnlRowBg1, f_pnlAmtColor(pnlTwoAgoAcc), 1, 3, "先々月（暦月・JST）にクローズした分の実現損益（確定値）。チャート読み込み後に月が2回以上繰り上がるまでは「-」表示。")
+        r += 1
+
+// ── アラート ──
+color barCol = barModeIn == "なし" ? na : pos == 1 ? barLongColIn : pos == -1 ? barShortColIn : barModeIn == "ロング/ショート/ノーポジ" ? barFlatColIn : na
+barcolor(barCol, title="ポジション連動バー色")
+
+alertcondition(buySig, "OBV BUY", "{{ticker}} Smart Volume Flow OBV BUY（確定足）")
+alertcondition(sellSig, "OBV SELL", "{{ticker}} Smart Volume Flow OBV SELL（確定足）")
+alertcondition(exitSig, "OBV EXIT", "{{ticker}} Smart Volume Flow OBV 決済（確定足）")
+alertcondition(slHit, "OBV SL", "{{ticker}} Smart Volume Flow OBV SL決済（確定足）")
