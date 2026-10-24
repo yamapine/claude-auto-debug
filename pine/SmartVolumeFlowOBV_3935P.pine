@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart OBV [3935P]  v1.20  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart OBV [3935P]  v1.21  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回追加】v1.20: ⑧ChoCh背景色（価格ピボットの構造転換を検出し、このOBVペインの背景を着色。参考: ATR Bollingers Light [3935P] v1.0、BOS・ライン・ラベル・アラートは不使用）。表示のみ・売買ロジック変更なし。
+// 【今回修正】v1.21: 「Zスコア」プロットをスタイル欄から表示できないように変更（editable=false）。OBV(数百万)と同じ縮尺で0付近に描かれ自動縮尺が崩れるため。データウィンドウ・CSV出力には従来どおり出る。ロジック変更なし。
+// 【前版(v1.20)で追加】v1.20: ⑧ChoCh背景色（価格ピボットの構造転換を検出し、このOBVペインの背景を着色。参考: ATR Bollingers Light [3935P] v1.0、BOS・ライン・ラベル・アラートは不使用）。表示のみ・売買ロジック変更なし。
 // 【前版(v1.19)で修正】v1.19: アラート修正: SLドテン以外の「SL決済→同じ足で新規シグナル建玉」が【SL→BUY】と表示され価格も終値だった問題を【SL＋BUY/SELL】（末尾にSL約定値）に分離。推奨ロットの切り捨てに浮動小数誤差対策(+1e-9)。ロジック変更なし。
 // 【前版(v1.18)で修正】v1.18: ①アラートを1本のalert()に集約（条件「Any alert() function call」1つで全通知。種類: BUY/SELL/BUY・ドテン/SELL・ドテン/SL→BUY/SL→SELL/EXIT/SL。⑦でエントリー/決済のみをON/OFF）。alertcondition 6本は廃止。②⑤に「推奨ロット（ATR連動）」行を追加（表示のみ。許容損失÷(SL幅×ATR＋コスト)×数量×レート）。ロジック変更なし。
 // 【前版(v1.17)で修正】v1.17: 名称を「Smart OBV」に変更（インジ名・テーブル見出し）。アラートの既定メッセージを「【BUY/SELL/EXIT/SL】 Smart OBV, ${{close}}」形式に変更。SLドテンのアラートを「SL→BUY」「SL→SELL」の2つに分割。ロジック変更なし。
@@ -266,7 +267,8 @@ plot(smoothingMA, "OBV-based MA", color=color.yellow)
 bbUpperBand = plot(bbU, title="Upper Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
 bbLowerBand = plot(bbL, title="Lower Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
 fill(bbUpperBand, bbLowerBand, color=isBB ? color.new(color.green, 90) : na, title="Bollinger Bands Background Fill", display=isBB ? display.all : display.none, editable=isBB)
-plot(z, "Zスコア", display=display.data_window)
+// Zスコアは値の確認用（データウィンドウ・CSV出力）。OBVと桁が違うためペインに描くと縮尺が崩れる → スタイル欄から表示不可(editable=false)
+plot(z, "Zスコア", display=display.data_window, editable=false)
 bgcolor(not chBgIn or not chDirSet ? na : chDir ? chBullColIn : chBearColIn, title="ChoCh構造方向の背景色")
 
 // ── シグナル（Y座標はOHLC/ペイン端に固定） ──
