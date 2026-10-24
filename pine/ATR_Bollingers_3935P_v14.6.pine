@@ -1,0 +1,1241 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════
+// ATR Bollingers [3935P] v14.6
+//
+// 【v14.6 変更点】⑦ChoChの「ChoCh ↑/↓」文字ラベルを個別に表示/非表示可能に ※ユーザー指示
+// ───────────────────────────────────────────────────────────────────────────────
+// ■ 要件
+//   ユーザーより「CHOCHの文字のラベルを個別に表示可能にしてください。現状だとラベルの
+//   項目の中に含まれているので、他のラベルも表示しなければならないのが嫌」との指示を受けた。
+//
+// ■ 原因
+//   「ChoCh ↑/↓」はlabel.new()で描画しているが、その表示可否を制御する専用の入力が
+//   無かった。そのため非表示にするには、スタイルタブの「ラベル」(label.new描画の一括
+//   表示切替)を使うしかなく、BUY/SELL(フラグ型・プレート型)・⊘見送り・✔通過の各ラベル
+//   と連動してしまっていた。
+//
+// ■ 変更内容
+//   ⑦ChoChグループに chochShowLabel(「ChoChラベル(文字)を表示」既定true)を新設し、
+//   ChoCh↑/↓のlabel.new()2箇所の描画条件に追加した。
+//     ・既定trueのため、値を変更しない限り見た目はv14.5と完全に同一。
+//     ・OFFにしても構造ライン(chochStruct)・背景色(chochBgEnable)・ChoCh検出・
+//       alertcondition/alert()・実績テーブルChoCh行は従来どおり動作する(文字ラベルのみ非表示)。
+//     ・他のラベルは既に個別の入力で制御できる(⊘見送り=qfShowSkipLabel / ✔通過=
+//       qfShowPassLabel / BUY・SELL=ラベルスタイル)。スタイルタブの「ラベル」はONのまま、
+//       各入力で個別に切り替える運用とする。
+//
+// ■【変更なし・検証済み】非変更の保証
+//   label.new()の描画条件にboolを1つ追加しただけで、chochUp/chochDnの算出式・chDir/
+//   chDirSet・水準消費・クールダウン、および①〜⑥のロジックは1文字も変更していない。
+//   label.new()はプロットカウント対象外のため、64プロット予算への影響もない。
+//   したがって実績テーブルのPF・勝率等の数値もv14.5から変更なし。
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// ATR Bollingers [3935P] v14.5(前バージョン)
+//
+// 【v14.5 変更点】BBライン(中央・上限・下限)の色を変更可能に ※ユーザー指示
+// ───────────────────────────────────────────────────────────────────────────────
+// ■ 要件
+//   ユーザーより「BBラインの色を変更可能にしてください」との指示を受けた。
+//
+// ■ 変更内容
+//   「ボリンジャーバンド」入力グループに、BB中央・BB上限・BB下限の3本すべてに
+//   適用されるラインカラー入力(bbLineColor)を新設した。移動平均線グループの
+//   maLineColor入力と同じパターン(input.color・グループ内「ラインカラー」)で統一。
+//     ・新規入力: bbLineColor(既定値は従来ハードコードされていた#b8b8b8をそのまま
+//       引き継ぎ。カラーピッカーで色相・透明度ともに変更可能)。
+//     ・削除: 「定数・カラー」ブロックにあった固定値 bbColor = color.new(#b8b8b8, 0)
+//       (死んだ定数を残さない方針。BB中央/上限/下限の3つのplot()呼び出しを
+//       bbLineColor参照に置換)。
+//   既定値は変更前と完全に同一(#b8b8b8)のため、ユーザーが値を変更しない限り
+//   見た目は変わらない。
+//
+// ■【変更なし・検証済み】非変更の保証
+//   色の参照元を差し替えただけで、BB自体の計算式(bbBasis=SMA(close,bbLength)、
+//   upperBB/lowerBB=bbBasis±bbDev×bbMultiplier)・①エントリー核心・②リスク管理・
+//   ③品質フィルターR1・⑥Range Filter・⑦ChoChのロジックは1文字も変更していない。
+//   したがって実績テーブルのPF・勝率等の数値もv14.4から変更なし。
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// ATR Bollingers [3935P] v14.4(前バージョン)
+//
+// 【v14.4 変更点】⑦ChoCh後のバックグラウンドカラーを指定可能な機能を追加 ※ユーザー指示
+// ───────────────────────────────────────────────────────────────────────────────
+// ■ 要件
+//   ユーザーより「CHOCH後のバックグラウンドカラーを指定して変更可能な機能を追加して
+//   ください」との指示を受けた。
+//
+// ■ 変更内容
+//   ⑦ChoCh(構造転換)グループに、直近に確定したChoChの方向に応じてチャート背景を
+//   着色するbgcolor()を追加した。方向判定はv14.1で確定済みのchDir(true=強気/
+//   false=弱気)・chDirSet(初回ChoCh確定済みか)をそのまま参照するのみで、ChoCh検出
+//   自体のロジック(ピボット・ATRバッファ・水準消費・クールダウン)は1文字も変更して
+//   いない。
+//     ・新規入力(3個、いずれも⑦ChoChグループ内):
+//       - chochBgEnable: 背景色の有効/無効(既定false=OFF)
+//       - chochBgBullColor: ChoCh↑確定後(強気構造)の背景色(既定 lime, 透明度90)
+//       - chochBgBearColor: ChoCh↓確定後(弱気構造)の背景色(既定 red, 透明度90)
+//       いずれもinput.color()のため、TradingViewのカラーピッカーで色相・彩度・
+//       透明度をユーザーが自由に指定・変更できる。
+//     ・背景色は直近のChoCh確定方向を「次の反対方向のChoChが検出されるまで」維持する
+//       (chDir/chDirSetの値が反転ChoCh確定時にのみ書き換わる既存仕様をそのまま利用)。
+//     ・chochBgEnable=false(既定)、またはまだ一度もChoChが確定していない
+//       (chDirSet=false)場合はbgcolor(na)となり、背景色は表示されない
+//       (v14.3以前と表示は完全に同一)。
+//
+// ■【変更なし・検証済み】非変更の保証
+//   背景色はchDir/chDirSetを"読むだけ"の表示専用レイヤーであり、書き換えは一切行わ
+//   ない。①エントリー核心・②リスク管理・③品質フィルターR1・⑥Range Filter・ChoCh
+//   自体の検出ロジックには一切接続しないため、実績テーブルのPF・勝率等の数値は
+//   v14.3から変更なし。
+//
+// ■【わかりません】プロットカウント予算について
+//   TradingView公式ドキュメント(Writing/Limitations)によれば、bgcolor()は
+//   plot()等と同じ64プロットカウント予算の対象内であり、alertcondition()も対象に
+//   含まれると記載されている(1呼び出しあたり最大7カウントまで、動的引数の数に応じて
+//   変動)。本スクリプトは現時点でplot系9+plotchar 11+plotshape 4+alertcondition 20+
+//   barcolor 1+fill(series) 1 = 46呼び出し(単純呼び出し数ベースの下限値。実際の
+//   コンパイラ側カウントは動的引数の数により変動するため未検証)を使用しており、
+//   bgcolor()追加後の正確な残余枠は本ツールでは確定できない【わかりません】。
+//   これまでのバージョン(v11〜v14.3)がエラーなく動作している実績から、余裕がある
+//   可能性が高いと推測するが(【推論】)、TradingViewへの貼り付け後にコンパイル
+//   エラーが出ないかの確認を推奨する。
+//
+// ■【わかりません】有効性について
+//   ChoCh方向に応じた背景色表示自体の裁量トレード上の有効性は、Universal Swing
+//   [3935P]・本スクリプトのいずれでも検証していない(構造把握を補助する視覚情報目的)。
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// ATR Bollingers [3935P] v14.3(前バージョン)
+//
+// 【v14.3 変更点】⑥Range Filterの各種条件を全廃し、原型のBUY/SELLフラグのみに簡素化
+//   ※ユーザー指示
+// ───────────────────────────────────────────────────────────────────────────────
+// ■ 要件
+//   ユーザーより「⑥で様々な条件が設定可能になっているが削除し、元々のRange Filterの
+//   BUY,SELLのフラグ設定機能だけ追加してください」との指示を受けた。
+//
+// ■ 変更内容
+//   v14.0〜v14.2の⑥は、①再エントリー用/②早期決済用の2つのRangeFilterエンジンを
+//   個別の期間・倍率で持ち、さらに①には「trendState一致」「R1 SSL一致」「傾き×MA
+//   フィルター一致」、②には「💰部分利確通過後のみ」という4つの追加条件を持つ
+//   複合的な構成だった(v14.2でP&L計算からは切り離し済みだが、条件の複雑さ自体は
+//   残っていた)。v14.3ではこれらを全廃し、Range Filter原案(@DonovanWall / 改変
+//   @guikroth / v5化 @tvenn)そのままの単一エンジン・単一のstop-and-reverse
+//   BUY/SELLフラグに戻した。
+//     ・エンジンを1系統に統合: rfEntFilt/rfExtFilt(期間・倍率が別々) → rfFilt
+//       (期間rfPeriod・倍率rfMultの単一設定、既定100/3.0はRange Filter原案の既定値)。
+//     ・「①/②」の役割分担、および position==0(ノーポジ限定)/position==±1(保有限定)
+//       といったATR Bollingers側の状態への依存を撤廃。RF自体の反転のみで
+//       rfBuySignal(強気転換)/rfSellSignal(弱気転換)が決まる、Universal Swing
+//       [3935P]のrfBuy/rfSellと同型の素のシグナルに統一した。
+//     ・削除した条件入力: rfUseEntry/rfUseExit(①②の有効切替)、rfEntryReqTrend
+//       (trendState一致)、rfEntryReqSSL(R1 SSL一致)、rfEntryReqTrendFilter
+//       (傾き×MAフィルター一致)、rfExitOnlyAfterTP(💰部分利確後のみ)。
+//     ・削除した表示入力: rfShowExitLine(2本目のRFライン)、rfExitMarkerChar
+//       (早期決済専用の絵文字)。RFラインは1本、マーカーはBUY/SELLの三角のみに統一。
+//   入力数は18個→6個(rfEnable/rfPeriod/rfMult/rfShowLine/rfShowMarker/showRfRow)。
+//
+// ■【変更なし・検証済み】非変更の保証
+//   v14.2で確立した「Range FilterのBUY/SELLは視覚情報+アラート専用で売買判定には
+//   一切使わない」という設計方針そのものは変更していない(今回はさらに条件も削減
+//   しただけ)。①エントリー核心・②リスク管理・③品質フィルターR1・ChoCh(v14.1)の
+//   ロジックは1文字も変更していない。
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// ATR Bollingers [3935P] v14.2(前バージョン)
+//
+// 【v14.2 変更点】Range FilterのBUY/SELLを損益計算ロジックから除外 ※ユーザー指示
+// ───────────────────────────────────────────────────────────────────────────────
+// ■ 要件
+//   ユーザーより「Range FilterのBUY,SELLは、損益計算のロジックから除外し、ラベルの
+//   表示・アラートが設定可能なだけにしてください」との指示を受けた。対象スクリプトは
+//   AskUserQuestionで確認済み(ATR Bollingers[3935P] v14.1)。
+//
+// ■ 変更内容
+//   v14.0〜v14.1では、①RF反転による再エントリー(ノーポジ時)と②RF逆行による早期決済が
+//   実際に position/entryPrice/positionFraction を書き換え、f_recordTrade()経由で
+//   実績テーブルのPF・勝率・期待値等に反映されていた(v14.0の主要な検証済み機能)。
+//   v14.2では、rfBuySignal/rfSellSignal/rfEarlyExitの検出ロジック自体(ピボット・
+//   バッファ・trendState/SSL一致条件等)は一切変更せず、その"検出結果を実際の売買に
+//   使う"配線だけを切断した。具体的には:
+//     ・①: anyEntryBuy/anyEntrySellから rfBuySignal/rfSellSignal を除外し、
+//       buySignal/sellSignal(閾値クロス)のみに戻した。
+//     ・②: rfEarlyExit成立時の position:=0・f_recordTrade()呼び出しを削除し、
+//       検出カウンタ(rfExitCount)の加算のみ残した。
+//   🔷🔷/⏏マーカー・ラインプロット・alertcondition・alert()は全て従来と同一の条件
+//   ("rfBuySignal"等の変数自体は不変)で発火し続けるため、見た目とアラート発火の
+//   タイミングは変わらない。変わるのは「その信号で実際に建玉/決済するかどうか」のみ。
+//
+// ■【事実】この変更の直接的な帰結(コード構造から自明・追加バックテスト不要)
+//   既定設定(rfEnable=true・①②ON)であっても、売買判定はbuySignal/sellSignalのみで
+//   決まるようになったため、実績テーブルの挙動は数式上「v14.0検証時のv13.2(RF併用OFF)」
+//   と完全に同一になる(実XAUUSD5分足73,165本/2025-09〜2026-09・スプレッド0.30USD控除:
+//   コスト後PF 0.964 / Flat率78.8% / 勝越四半期2/4)。v14.0/v14.1で測定した①②有効時の
+//   優位性(PF 1.164〜1.216等)は、RFラベル/アラートを見て裁量で売買する場合にのみ
+//   参考になる数値であり、本スクリプトの自動集計にはもう反映されない。
+//
+// ■【今回削除】不要になった入力
+//   「早期決済の数量」(rfExitPortionInput/rfExitHalf、全部/半分の選択)は、RF早期決済が
+//   実際の決済を行わなくなったため意味を失い削除した(死んだ入力を残さない方針)。
+//
+// ■【変更なし・検証済み】非変更の保証
+//   ①エントリー核心(閾値クロス)・②リスク管理(保護ストップ・💰部分利確)・
+//   ③品質フィルターR1・ChoCh(構造転換・v14.1)のロジックは1文字も変更していない。
+//   Range FilterのRF自体の計算式(f_smoothrng/f_rngfilt・rfEntFilt/rfExtFilt等)も不変。
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// ATR Bollingers [3935P] v14.1(前バージョン)
+//
+// 【v14.1 変更点】Universal Swing[3935P]のChoCh(構造転換)機能を移植・統合 ※ユーザー指示
+// ───────────────────────────────────────────────────────────────────────────────
+// ■ 経緯・要件確認
+//   ユーザーより「ATR Bollingersに対しUniversal SwingのCHOCH機能を追加統合してほしい」
+//   との依頼を受け、以下2点を事前に確認・確定した(AskUserQuestionによる選択)。
+//     (1) 統合ベース: 本プロジェクト最新かつバックテスト検証済みのv14.0(Range Filter
+//         併用版)を採用。ユーザー提示のv13.2は不採用(v13.2はRange Filter併用機能を
+//         持たない旧世代のコードであるため)。
+//     (2) ChoChの役割: Universal Swing自身の設計と同様、「視覚情報+アラートのみ」に
+//         限定。エントリー・決済・保護ストップ・💰部分利確・品質フィルターR1・
+//         Range Filter併用の判定ロジックには一切接続しない。
+//         (v13.0で削除済みの「ChoChエントリーモード」は復活させない)
+//
+// ■ 移植元と実装方針
+//   Universal Swing + RBR/DBD Zones + Range Filter[3935P] v2.11の
+//   「⑧ ChoCh(構造転換)」ブロックをロジックそのまま移植した。
+//   Universal Swing側もv2.9の統合時点で「ATR Bollingers/Confluence Sniperで確立済みの
+//   改良版ロジック(ピボット±ATRバッファ・水準消費・クールダウン・chDirSet初期化
+//   バイアス修正)」を採用している、との記載があり、本質的には本プロジェクト内で
+//   既に検証済みの実装パターンをUniversal Swing経由で再度ATR Bollingersに還流させる形。
+//
+//   【設計上の相違点(単一TF化に伴う変更)】
+//   ・Universal SwingはMTF(request.security)構成のため、ピボットの位置をtime値で
+//     追跡していた(phT_A等)。ATR Bollingersは単一チャートTFのみのため、
+//     bar_index基準の追跡に変更した(chBarHigh := bar_index - chochRightBars)。
+//     line.new/label.newもxloc.bar_time→bar_index基準(既定のxloc.bar_index)に変更。
+//     これは表示位置の基準が変わるだけで、検出ロジック自体は同一。
+//   ・Universal Swingは⑦構造(zigzag)のswingLeftBars/swingRightBarsをChoCh用ピボットに
+//     流用していたが、ATR Bollingersにはzigzag機能自体が存在しないため、ChoCh専用の
+//     chochLeftBars/chochRightBars(既定5/5、Universal Swingの既定値を踏襲)を新設した。
+//   ・ATRバッファは新規のta.atr()を追加せず、既存のsafeATR(atrPeriod、既定14)を再利用した
+//     (Universal SwingのatrLenも既定14であり、実質的に同一設定)。
+//
+// ■【今回追加】実装内容
+//   ・新グループ「⑦ChoCh(構造転換)」(入力9個: 表示/Left・Right Bars/ATRバッファ倍率/
+//     水準消費/クールダウン/構造ライン表示/BOS表示/実績テーブル行表示)
+//   ・ChoCh(構造転換)↑↓ および BOS(構造継続)↑↓ の検出ロジック(ピボット±ATRバッファ・
+//     水準消費・クールダウン・chDirSet初期化バイアス修正込み)
+//   ・白線+ラベルでChoCh、グレー点線+小ラベルでBOSを描画(Universal Swingと同一配色)
+//   ・実績テーブルに任意表示の「ChoCh」行を追加(構造方向+累積検出件数)
+//   ・alertcondition 4本追加(ChoCh↑/↓、BOS↑/↓)+ 数値付きalert() 2本追加
+//
+// ■【変更なし・検証済み】非変更の保証
+//   エントリー(閾値クロス・RF再エントリー)・決済(反転/保護ストップ/RF早期決済/
+//   💰部分利確)・品質フィルターR1・Range Filter併用のロジックは1文字も変更していない。
+//   ChoCh関連の新規変数(ch*接頭辞)は既存の売買判定変数(position/trendState/
+//   buySignal/sellSignal/rfBuySignal/rfSellSignal等)を一切参照せず、逆にそれらからも
+//   一切参照されない、完全に独立した表示専用レイヤーである【設計上の保証】。
+//   「ChoCh表示」をOFFにすれば描画・アラートのみ停止し、既存のあらゆる売買判定は無影響。
+//
+// ■【わかりません】未検証事項
+//   ChoCh/BOSの有効性そのもの、既定パラメータ(バッファ0.3ATR・クールダウン10本など)は
+//   Universal Swing v2.9からの理論値の踏襲であり、ATR Bollingers自体での独自の
+//   バックテスト・有効性検証は実施していない。本機能は視覚情報+アラート専用であり
+//   ロジックに接続しないため、既存の全バックテスト結果(v14.0のPF等)には一切影響しない。
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// ATR Bollingers [3935P] v14.0(前バージョン)
+//
+// 【v14.0 変更点】Range Filter の部分併用（①RF再エントリー / ②RF早期決済）を追加 ※ユーザー指示
+// ───────────────────────────────────────────────────────────────────────────────
+// ■ 背景（ユーザー申告の2つの問題）
+//   (1) Flat（ノーポジ）の期間が長い
+//   (2) BBを超えた後、大きく戻ってから決済アラートが出る（利益の戻しが大きい）
+//   これに対し Range Filter の BUY/SELL を「部分的に」併用できないかを検証した。
+//
+// ■ 検証データ（本バージョンの全数値の出典）
+//   データ    : HistData.com 実 XAUUSD 1分足 → 5分足に集約
+//               365,736本(1分) → 73,165本(5分) / 2025-09-01 〜 2026-09-11（約12.3か月）
+//   ※v11.0の検証(Dukascopy 18,657本/3.2か月)の約4倍のサンプル。銘柄は同じ実XAUUSDスポット。
+//   検証方法  : v13.2のエントリー/決済ロジックをPythonで完全再現し、
+//               ta.ema/ta.rma/ta.atr/ta.rsi/ta.stdev をTradingView互換の初期化で実装。
+//               バー内の実行順序（保護ストップ→決済→部分利確→pending→エントリー）も同一。
+//   コスト    : スプレッド 0.30 USD をポジション往復ごとに控除（0.0/0.5/0.672/1.0でも感度確認）
+//   R定義     : エントリー時の保護ストップ距離（ATR(14)×2.5）を1Rとする
+//   ⚠【わかりません】本サンプルを見た上で設定を選定しているため、厳密なアウトオブサンプル
+//     検証ではない。また手数料・スワップ・約定滑りは未計上。実弾投入前に Paper Trading
+//     での前向き検証を強く推奨する。
+//
+// ■【事実】主要な検証結果（スプレッド0.30控除後）
+//   ┌─────────────────┬──────┬────────┬───────┬────────┬────────┬────────┐
+//   │ 構成             │  N   │コスト後PF│ Flat率 │ 戻し幅  │大負け率 │勝越四半期│
+//   ├─────────────────┼──────┼────────┼───────┼────────┼────────┼────────┤
+//   │ v13.2（併用OFF） │  576 │ 0.964  │ 78.8% │ 1.37R  │ 36.8%  │  2/4   │
+//   │ ①再エントリーのみ│ 1165 │ 1.216  │ 50.4% │ 1.39R  │ 39.5%  │  4/4   │
+//   │ ①+②（v14.0既定）│ 1412 │ 1.164  │ 56.8% │ 1.25R  │ 33.1%  │  4/4   │
+//   │ ①+②(50/2.0)     │ 1747 │ 1.099  │ 64.8% │ 1.06R  │ 20.0%  │  2/4   │
+//   │ ②のみ（①OFF）   │  576 │ 1.044  │ 84.5% │ 1.27R  │ 32.1%  │  2/4   │
+//   └─────────────────┴──────┴────────┴───────┴────────┴────────┴────────┘
+//   ・戻し幅 = 最大含み益(R) − 実現(R)。問題(2)の定量指標。小さいほど戻しが軽い。
+//   ・大負け率 = −0.8R以下で終わったポジションの割合。
+//   ・勝越四半期 = 4四半期のうちコスト後PF>1.0だった数（頑健性の主指標）。
+//
+// ■【事実】エントリー起点別の分解（①ON構成・N=1165の内訳）
+//   閾値クロス由来（従来）: コスト後PF 0.959 / N=565 / 期待値 −0.010R / 総R −5.8
+//   RF反転由来（v14.0）  : コスト後PF 1.438 / N=600 / 期待値 +0.113R / 総R +67.8
+//   → 本サンプルでは、総利益のほぼ全てがRF反転由来のエントリーから発生した。
+//      RF再エントリーは「確立済みトレンド内での押し目/戻り継続エントリー」に相当し、
+//      閾値クロス（トレンド転換の初動）とは構造的に異なる設定であることが要因と考える【推論】。
+//
+// ■【事実】頑健性の確認
+//   四半期別コスト後PF（25/10-, 26/01-, 26/04-, 26/07-）
+//     v13.2       : 0.71 / 1.15 / 0.71 / 1.44  → 2四半期で1.0割れ
+//     ①のみ       : 1.05 / 1.45 / 1.02 / 1.33  → 4四半期すべて1.0超
+//     ①+②（既定）: 1.05 / 1.32 / 1.01 / 1.26  → 4四半期すべて1.0超
+//   スプレッド感度（コスト後PF）
+//     v13.2  : 1.009(0.0) → 0.964(0.3) → 0.911(0.672) → 0.867(1.0)
+//     ①のみ  : 1.266(0.0) → 1.216(0.3) → 1.158(0.672) → 1.109(1.0)
+//     ①+②   : 1.215(0.0) → 1.164(0.3) → 1.104(0.672) → 1.055(1.0)
+//   パラメータ感度（①のみ・期間30〜150 × 倍率1.5〜3.0 の42通り）
+//     コスト後PFは 1.098〜1.261 の範囲に全て収まり、鋭いピークは存在しない。
+//     → 特定パラメータへの過剰最適化ではないと判断した。既定50/2.0は中央付近の値。
+//
+// ■【重要】採否の判断根拠
+//   ・①RF再エントリー → 既定ON。4/4四半期でPF>1.0、スプレッド1.0USDでもPF 1.109を維持。
+//   ・②RF早期決済     → 既定ON（ただし①との併用が前提）。
+//     ②を単独で使うと（①OFF+②ON）勝越四半期は2/4に落ち、効果が確認できなかった。
+//     ②は問題(2)（戻しの大きさ）への対策として、PFを0.05程度犠牲に
+//     戻し幅1.39R→1.25R・大負け率39.5%→33.1%を得る位置づけ。
+//     PF最大化を優先するなら②をOFFにすること（①のみでPF 1.216）。
+//
+// ■【重要】v13.3/v13.4「サブEntry」の結論との突き合わせ（本セッションで実施）
+//   本プロジェクトの v13.4 は、同じ「FLAT期間が長い」問題に対する サブEntry
+//   （MACD方向 + 実体でのMA突破）を検証し、サブ単独 PF 0.974（前半0.994/後半0.950）
+//   として既定OFFにしている。その結論は次のように一般化されていた:
+//     「エッジは"トレンド転換後の最初の閾値クロス"に固有であり、
+//       同一トレンド内の再エントリー（押し目でのMA奪還）には再現しない」
+//   RF再エントリーも"同一トレンド内の再エントリー"であるため、この結論と矛盾する。
+//   そこで v13.4 と同一の検証窓・同一スプレッドで突き合わせた。
+//
+//   【事実】(1) 本セッションのPython再現はv13.4の数値をほぼ再現した（再現性の確認）
+//     v13.4報告 : 通常Entryのみ N=152 / PF 1.415
+//     本再現     : 通常Entryのみ N=156 / PF 1.340（窓2026-06-01〜09-07, spread 0.674）
+//     差はデータ源の違い（v13.4=Dukascopy / 本検証=HistData）由来と考える【推論】。
+//
+//   【事実】(2) 同一窓でも RF再エントリーは PF>1.0 を維持した（サブEntryとは異なる）
+//     RF反転由来のみ : N=154 / PF 1.263 / 期待値 +0.081R
+//     （同窓の サブEntry単独は v13.4報告で PF 0.974）
+//
+//   【事実】(3) エントリー起点別の四半期別コスト後PF（12.3か月・spread 0.30）
+//     RF反転由来   : 1.254 / 1.440 / 1.672 / 1.321 → 4四半期すべて1.0超
+//     閾値クロス由来: 0.816 / 0.961 / 0.742 / 1.386 → 1四半期のみ1.0超
+//
+//   【結論】v13.4の「サブEntry（MACD+実体MA突破）は効かない」という判定自体は
+//     本セッションでは再検証していないため覆さない。ただし、そこから導かれた
+//     「同一トレンド内の再エントリー一般にエッジは無い」という一般化は支持されない。
+//     トリガーの幾何（何を以て再エントリーとするか）で結果が分かれる。
+//     また「閾値クロスこそが信頼できるエッジ」という前提も、12.3か月では
+//     4四半期中1四半期しかPF>1.0にならず支持されなかった。
+//     v13.4の検証窓（2026-06〜09）は閾値クロスが最も好調だった四半期に該当する。
+//   ⚠【わかりません】なぜRange Filterの反転だけが再現するのかの機序は特定できていない。
+//     RFは「価格がレンジ幅を超えて階段を更新した」時点で転換を出すため、
+//     MACD/MA突破よりトレンド継続の確認が遅く・強いことが要因かもしれない【推論】。
+//
+// ■【今回追加】実装内容
+//   ・新グループ「⑥Range Filter 併用【v14.0新規】」（入力18個）
+//   ・Range Filter エンジンを2系統（再エントリー用 / 早期決済用）で独立計算
+//     原案 @DonovanWall / 改変 @guikroth / v5化 @tvenn
+//   ・RF再エントリー: position==0（当バーの決済処理後）かつ RF反転 かつ
+//     trendState一致 かつ R1 SSL一致 のとき新規エントリー。ドテンはしない。
+//   ・RF早期決済: 保有と逆方向にRFが反転したら終値で決済（全部/半分を選択可）。
+//     実行順序は 保護ストップ → RF早期決済 → 反転決済 → 💰部分利確。
+//   ・🔷RFマーカー / ⏏早期決済マーカー / RFライン表示 / 実績テーブル「RF併用」行
+//   ・alertcondition 5本追加（RF再エントリー買/売、RF早期決済、統合エントリー買/売）
+//   ・数値付き alert() 2本追加
+//
+// ■【変更なし・検証済み】非変更の保証
+//   ベースライン・BB・MA・SSL・RSI・保護ストップ・💰部分利確・品質フィルターR1・
+//   実績集計の計算式は1文字も変更していない。
+//   「Range Filter 併用を有効化」をOFFにすれば v13.2 と完全に同一の売買が再現される
+//   【設計上の保証】。
+//
+// ───────────────────────────────────────────────────────────────────────────────
+// 【v13.2以前の変更履歴（要約）】
+//   v13.2 実績テーブルの表示調整(サイズ可変化 + コンパクト時の品質フィルター非表示)
+//   v13.1 ローソク足色付けを trendState 基準から position 基準へ（Flat時はグレー固定）
+//   v13.0 ChoCh/MACD×ChoChモードを削除し通常モード（閾値クロス）のみに一本化
+//   v12.0 品質フィルターをR1のみに整理、需給ゾーン検出を完全削除
+//   v11.1 CE10123修正（ta.*のlength仮引数を simple int で明示）
+//   v11.0 エントリー品質フィルター追加 + 保護ストップ優先化（既定ON）
+//   v10.9 月ラベルを実際の暦月番号表示に切替可能化
+//   v10.4 SSLチャネルを視覚表示専用オーバーレイとして追加
+// ═══════════════════════════════════════════════════════════════════════════════
+indicator("ATR Bollingers [3935P] v14.6", overlay=true, max_labels_count=500, max_boxes_count=200)
+//==============================================================================
+// パラメータ
+//==============================================================================
+// ── ①エントリー核心パラメータ(ヒステリシス・ベースライン・フィルター)【唯一のエントリー方式】 ──
+enableHysteresis = input.bool(true, "中立ゾーン有効化", group="ヒステリシス", tooltip="【ヒステリシス機構】ベースライン±閾値の中立ゾーン内では前回状態を維持し、価格ノイズによるウィップソーを抑制。\n\nこの状態(強気/弱気)の反転がエントリーと決済の両方のトリガーになります。\n・ロング決済: 終値 < ベースライン − 閾値\n・ショート決済: 終値 > ベースライン + 閾値\n\n無効化時: 閾値ゼロ＝ベースラインそのものが基準になります。")
+thresholdMode = input.string("ATR倍率", "閾値方式", options=["ATR倍率", "固定値(建値通貨)"], group="ヒステリシス", tooltip="ATR倍率: ボラティリティ適応型、全市場対応(推奨)\n固定値: 静的設定")
+atrMultiplier = input.float(2.0, "ATR倍率閾値", minval=0.1, maxval=3.0, step=0.05, group="ヒステリシス", tooltip="【ATR倍率方式】閾値 = ATR × 倍率\n\nこの値を大きくすると決済が遠くなり(損失許容が拡大・ダマシに強い)、小さくすると決済が近くなります(損失は小さいがウィップソー増)。\n\n【v11.0で既定値を0.3→2.0に変更】提供チャートの実出力(保護ストップ列・決済マーカー)から逆算した実運用値が約2.0ATR(固定8USD相当)であったため、既定値を実運用値に合わせました。0.3に戻せば従来既定の挙動になります。\n\n【実測・XAUUSD5分足3.2か月のコスト後PF】0.3倍:0.84 / 0.5倍:0.82 / 1.0倍:0.91 / 2.0倍:0.90 → いずれも単体ではコスト後マイナス。品質フィルター併用が前提です。")
+fixedThreshold = input.float(8.0, "固定閾値(建値通貨)", minval=0.01, step=1.0, group="ヒステリシス", tooltip="【固定値方式】絶対値ベース閾値。単位はチャートの建値通貨(日本株なら円、XAUUSDならUSD)。\n\n【v11.0で既定値を15.0→8.0に変更】提供チャートの実エントリー(bar215/315/489)を3/3再現した値が8.0USDであったため。")
+atrPeriod = input.int(14, "ATR期間", minval=5, maxval=200, group="ヒステリシス", tooltip="閾値幅を決めるATR計算期間。デフォルト14はWilderのオリジナル定義およびTradingView公式ATR指標の標準値に準拠。")
+baselinePeriod = input.int(20, "ベースライン期間", minval=5, maxval=800, group="ベースライン", tooltip="ベースラインはエントリーと決済の両方の基準線です。期間を伸ばすと決済が遅く(トレンド追随重視)、縮めると早くなります(利益確定重視)。")
+smoothing = input.int(5, "平滑化", minval=1, maxval=10, group="ベースライン", tooltip="二重EMA平滑化係数。\n\n【v11.0で既定値を3→5に変更】提供チャートの『ベースライン』出力列と誤差0.0000で一致した値がEMA(EMA(close,20),5)であったため、実運用値を既定にしました。")
+enableTrendFilter = input.bool(true, "傾き×ベースライン/MAフィルター有効化", group="シグナルフィルター", tooltip="ONにすると、BB中央ライン(SMA)が上昇傾向の間はベースラインが移動平均線より下にある場合のみSELLエントリーを許可します(BUYはその逆)。\n\n【v11.0で既定値をOFF→ONに変更】提供チャートのbar437『✕決済のみ』(＝決済されたが新規エントリーが出ていない)がこのフィルターON時の挙動と一致したため。\n\n⚠️【実測】このフィルターは遷移を保留(pending)し、条件成立時に遅れて発火します。遅れて発火したエントリー(閾値超過幅がマイナス側)はPF 0.80・大負け率51.6%と成績が悪化します。下の『③エントリー品質フィルター』の『見送り時にpendingを破棄』の併用を推奨します。\n\n※決済は本フィルターの影響を受けず、常に閾値クロスで実行されます。")
+bbSlopeLookback = input.int(5, "BB中央ライン傾き比較本数", minval=1, maxval=200, group="シグナルフィルター", tooltip="BB中央ラインが何本前と比べて上昇/下降傾向かを判定する比較本数。上記フィルター専用。")
+// ── ②リスク管理(保護ストップ・RSIリバーサル部分利確) ──
+enableProtectiveStop = input.bool(true, "保護ストップを有効化(ATR固定)", group="保護ストップ", tooltip="エントリー価格からATR×倍率の絶対距離に固定ストップを設置し、low/high(終値を待たない)で判定します。")
+stopPriorityOverReversal = input.bool(true, "保護ストップを反転決済より優先する【v11.0新規・推奨ON】", group="保護ストップ", tooltip="【重要な挙動変更・既定ON】\n\nv10.9以前は\n  hitProtectiveStopLong = ... and not reversalWillExit\nと書かれており、同一バーで反転決済条件(終値がベースライン±閾値を突破)が成立すると、保護ストップの方が先に触れていても無効化され『終値』で決済されていました。\n結果としてストップ価格を大きく超える損失が発生していました。\n\n【実測・XAUUSD5分足3.2か月/N=246】\n該当8件、平均 -2.36R、最悪 -7.78R。グロス総利益+14.5Rを1件で消す規模。\nON(ストップ優先)にした場合: PF 1.116→1.165 / 総損益 +163.9→+224.1USD / 最悪R -7.78→-5.40\n\nOFFにするとv10.9と完全に同一の挙動に戻ります。\n※窓抜け(始値がストップを飛び越えた)場合は始値約定として損益計上するため、ONでも-1Rを超える損失は発生しえます。")
+protectiveStopAtrLen = input.int(14, "ATR期間(ストップ用)", minval=1, maxval=200, group="保護ストップ", tooltip="保護ストップの距離を決めるATR計算期間。ヒステリシス用ATR期間とは独立して設定できます。")
+protectiveStopAtrMult = input.float(2.5, "ATR倍率(ストップ用)", minval=0.2, maxval=10.0, step=0.1, group="保護ストップ", tooltip="エントリー価格からこの倍率×ATRだけ離れた位置に固定ストップを置きます。\n\n【実測】提供チャートの実エントリー6件すべてで倍率2.495〜2.500が算出されたため、実運用値は2.5で確定しています。")
+showStopMarker = input.bool(true, "保護ストップ到達マーカー表示", group="保護ストップ")
+stopMarkerChar = input.string("🛑", "ストップマーカー絵文字", group="保護ストップ")
+showGapMarker = input.bool(true, "窓抜けマーカー表示", group="保護ストップ", tooltip="始値が保護ストップ価格を飛び越えて約定した場合に表示します。")
+gapMarkerChar = input.string("⛔", "窓抜けマーカー絵文字", group="保護ストップ")
+sendGapAlert = input.bool(true, "窓抜け時に数値付きalert()を送信", group="保護ストップ")
+showRsiRev = input.bool(true, "RSIリバーサル検出を有効化", group="RSIリバーサル", tooltip="OFFにするとRSIリバーサル検出自体を停止します(💰部分利確も自動的に無効化されます)。\n\n⚠️【実測・重要】XAUUSD5分足3.2か月の検証では、R>=1.5の『特に大きく勝つ』トレード27件のうち23件(85%)がこの💰部分利確経由で発生しています。一方R<=-0.8の『特に大きく負ける』89件では💰到達が0件でした。このロジックが本インジケーターの利益源泉です。OFFは推奨しません。")
+enablePartialExit = input.bool(true, "💰部分利確ロジック有効化(建玉50%+50%)", group="RSIリバーサル", tooltip="ONの場合、RSIリバーサル検出の1回目で建玉の50%、2回目で残り50%を利確します。残り建玉は閾値クロスで決済されます。")
+rsiLen = input.int(14, "RSI期間", minval=1, maxval=200, group="RSIリバーサル")
+rsiOb = input.int(70, "買われ過ぎ", minval=50, maxval=95, group="RSIリバーサル", inline="rsilv")
+rsiOs = input.int(30, "売られ過ぎ", minval=5, maxval=50, group="RSIリバーサル", inline="rsilv")
+rsiRevCooldown = input.int(5, "クールダウン(bar)", minval=1, maxval=100, group="RSIリバーサル", tooltip="直近の反発検出から何本経過したら次の検出を許可するか。連続シグナルの乱発を防ぎます。")
+revMarkerChar = input.string("💰", "マーカー絵文字", group="RSIリバーサル")
+rsiSmaLen = input.int(9, "RSI平滑化SMA期間(表示用)", minval=1, maxval=200, group="RSIリバーサル", tooltip="実績テーブルの「RSI/Signal」欄に表示するための値であり、エントリー・決済・💰部分利確ロジックには一切影響しません。")
+// ══════════════════════════════════════════════════════════════════════════════
+// ── ③エントリー品質フィルター(見送り判定)【v11.0新規 / v12.0でR2〜R5・需給ゾーンを削除】 ──
+// ══════════════════════════════════════════════════════════════════════════════
+grp_qf = "③エントリー品質フィルター(見送り判定)"
+qfUseSSL = input.bool(true, "R1: SSLチャネルの方向が不一致なら見送り", group=grp_qf, tooltip="終値がSSL上ライン(SMA高値200)を上回っていれば強気、SSL下ライン(SMA安値200)を下回っていれば弱気と判定し、エントリー方向と一致しない場合に見送ります。\n\n【実測・4セル全てでPF<1.0】\n  設定A(閾値2.0ATR): 不一致 PF 0.68 (前半0.63 / 後半0.76) vs 一致 PF 1.55 (1.48/1.63)\n  別標本(閾値0.3/0.5/1.0ATR合算 N=2,948): 不一致 0.84 (0.87/0.81) vs 一致 1.26 (1.28/1.24)\n\n検証した全因子の中で最も再現性が高く、単独でもコスト後PFを0.93→1.26に改善しました。\n\n【v12.0】旧R2(ADX過大)/R3(需給ゾーン距離)/R4(BB%b)/R5(飛び乗り)はユーザー指示によりR1のみに整理し削除しました。")
+qfClearPending = input.bool(true, "見送り時に保留(pending)を破棄して後追いエントリーを禁止", group=grp_qf, tooltip="ONの場合、品質フィルターで見送ったシグナルはその場で破棄され、同じトレンド方向のまま後から遅れて発火することはありません。\n\n【実測】遅れて発火したエントリー(閾値超過幅がマイナス側の帯)は PF 0.80・大負け率51.6%と、全帯で最悪の成績でした。OFFにするとこの帯のエントリーが復活します。\n\n※本バックテストはON相当(見送り＝そのシグナルは無かったものとする)で実施しています。")
+qfShowSkipMarker = input.bool(true, "見送り時に⊘マーカーを表示", group=grp_qf)
+qfSkipMarkerChar = input.string("⊘", "見送りマーカー絵文字", group=grp_qf)
+qfShowSkipLabel = input.bool(true, "見送り時に理由ラベルを表示", group=grp_qf, tooltip="R1(SSL方向不一致)で弾いたことを吹き出しで表示します。ラベル数が多い場合はmax_labels_count=500により古いものから自動削除されます。")
+qfShowPassLabel = input.bool(false, "フィルター通過時に✔ラベルを表示", group=grp_qf, tooltip="品質フィルターを通過してエントリーした足に、通過した旨を表示します(既定OFF)。")
+qfSendSkipAlert = input.bool(true, "見送り時に数値付きalert()を送信", group=grp_qf, tooltip="発火理由・SSL方向を含む文字列をalert()で送信します。\nalertcondition『⊘見送り(買い方向)』『⊘見送り(売り方向)』も別途利用できます。")
+// ── ④参照・視覚オーバーレイ(MA・BB・SSL・表示・ラベル) ──
+maTypeInput = input.string("EMA", "種別", options=["SMA", "EMA", "WMA"], group="移動平均線", tooltip="WMA選択時、ソースをhl2・期間を55にすると『HAMAライン』相当(加重移動平均)を再現できます。")
+maLength = input.int(60, "期間", minval=1, maxval=1000, group="移動平均線", tooltip="【v11.0で既定値を200→60に変更】提供チャートの『MA/EMA/WMA』出力列と誤差0.0000で一致した値がEMA(60)であったため。")
+maSource = input.source(close, "ソース", group="移動平均線")
+showMA = input.bool(true, "表示", group="移動平均線")
+maLineColor = input.color(color.new(#2962ff, 0), "ラインカラー", group="移動平均線")
+enableBB = input.bool(true, "BB有効化", group="ボリンジャーバンド")
+bbLength = input.int(200, "BB期間", minval=5, maxval=800, group="ボリンジャーバンド", tooltip="【v11.0で既定値を20→200に変更】提供チャートの『BB中央』出力列と誤差0.0000で一致した値が200であったため。")
+bbMultiplier = input.float(2.5, "BB倍率", minval=1.0, maxval=5.0, step=0.1, group="ボリンジャーバンド", tooltip="【実測】提供チャートの上限/中央/標準偏差から算出した倍率は2.5000(標準偏差0.00000)で確定。")
+showBbTouchMarker = input.bool(true, "💎BBタッチ&リターンマーカー表示", group="ボリンジャーバンド", tooltip="高値がBB上限に、または安値がBB下限に到達した後、ヒゲも含めて完全にバンド内へ戻ってきたら💎マークとアラートを出します。情報表示のみ。")
+bbTouchMarkerChar = input.string("💎", "タッチ&リターン絵文字", group="ボリンジャーバンド")
+bbLineColor = input.color(color.new(#b8b8b8, 0), "ラインカラー", group="ボリンジャーバンド", tooltip="BB中央・上限・下限の3本すべてに適用される色です(v14.4以前は#b8b8b8固定)。色相・透明度ともにこのカラーピッカーで指定できます。")
+enableSSL = input.bool(true, "SSLチャネル表示", group="SSLチャネル", tooltip="【v11.0で役割が変更されました】v10.4〜v10.9では『視覚表示専用』でしたが、v11.0からはエントリー品質フィルターR1(SSL方向一致)の判定に使用されます。\n\nこの表示ON/OFFはR1の判定には影響しません(計算は常に実行されます)。R1を止めたい場合は『③エントリー品質フィルター』側でR1をOFFにしてください。")
+sslLen = input.int(200, "SSL期間(高安SMA)", minval=2, maxval=500, group="SSLチャネル", tooltip="ma1=SMA(high, 期間) / ma2=SMA(low, 期間)。SSL Channel原典の既定値200。\n\n【実測】提供チャートの『SSL上』『SSL下』出力列と誤差0.0000で一致した値が200で確定。")
+sslWicks = input.bool(false, "ヒゲも判定に使う(Take Wicks)", group="SSLチャネル", tooltip="ONにするとhigh/lowで方向判定します。原典の既定はOFF(closeで判定)。\n\n⚠️バックテストはOFF(close判定)で実施しています。ONにするとR1の判定結果が変わり、検証済みの数値は保証されません。")
+sslFillOn = input.bool(true, "帯を塗る", group="SSLチャネル")
+showBBBands = input.bool(true, "BBバンド", group="表示")
+enableCandleColor = input.bool(true, "ローソク足色付け", group="表示")
+barBullColor = input.color(color.new(#4caf50, 0), "陽線カラー(上昇トレンド)", group="表示", inline="barcolor")
+barBearColor = input.color(color.new(#f44336, 0), "陰線カラー(下降トレンド)", group="表示", inline="barcolor")
+barNeutralColor = input.color(color.new(#808080, 50), "Flatカラー(ノーポジ時)", group="表示", inline="barcolor", tooltip="ポジションがFlat(ノーポジ)の間、ローソク足をこの色にします。v13.1でトレンド方向(trendState)基準からポジション状態(position)基準に変更されました。")
+showExitOnlyMarker = input.bool(true, "決済のみマーカー表示", group="表示", tooltip="閾値クロスで決済されたが、フィルターにより新規エントリーが発生しなかった場合に表示します。品質フィルターで見送った場合もこのマーカーが出ます(⊘マーカーと併記)。")
+exitOnlyMarkerChar = input.string("✕", "決済のみ絵文字", group="表示")
+labelStyleInput = input.string("シンプル三角", "ラベルスタイル", options=["シンプル三角", "フラッグ型", "機関投資家風プレート"], group="BUY/SELLラベル", tooltip="BUY/SELLシグナル表示スタイルを切り替えます。")
+isLabelTriangle = labelStyleInput == "シンプル三角"
+isLabelFlag = labelStyleInput == "フラッグ型"
+isLabelPlate = labelStyleInput == "機関投資家風プレート"
+// ── ⑤集計・換算(実績テーブルとポジションサイジング) ──
+showStatsTable = input.bool(true, "実績テーブル表示", group="実績テーブル")
+maxTrades = input.int(100, "集計対象トレード数(直近N件)", minval=5, maxval=500, group="実績テーブル", tooltip="勝率・PF・期待値・最大DD・実現損益のすべてを、この直近N件のクローズ済みトレードで統一して集計します。")
+tablePositionInput = input.string("右上", "表示位置", options=["右上", "左上", "右下", "左下"], group="実績テーブル")
+tableSizeInput = input.string("標準", "テーブルサイズ", options=["極小", "小", "標準", "大"], group="実績テーブル", tooltip="【v13.2新規】実績テーブル全体の文字サイズ(≒表示の大きさ)を一括で縮小/拡大します。各行の相対的な強弱(見出し行/強調行)は保ったまま、選択した段階だけ全体を同じ方向にシフトします。\n\n極小: 最大限コンパクトに表示(狭いチャート・小さいウィンドウ向け)\n小: やや小さく表示\n標準: 従来通りの大きさ(既定)\n大: やや大きく表示")
+compactMode = input.bool(false, "コンパクト表示モード", group="実績テーブル", tooltip="ONの場合、Position/Entry価格/決済ライン/含み損益/今月損益/合計損益/RSI の7行のみを表示します。\n\n【v13.2】品質フィルター行はコンパクトモード中は下の「品質フィルター行を表示」の設定に関わらず常に非表示になります(通常モードに戻すと設定通り表示されます)。")
+totalRowModeInput = input.string("先月損益", "「合計損益」行の表示切替", options=["合計損益", "先月損益"], group="実績テーブル", tooltip="【合計損益】直近N件の実現損益+含み損益(保有中は変動)。\n【先月損益】先月クローズ分のみの実現損益(確定値・以後変動しません)。")
+isTotalRowMonthly = totalRowModeInput == "先月損益"
+showTwoMonthsAgoRow = input.bool(false, "先々月損益行を追加表示", group="実績テーブル")
+showActualMonthLabel = input.bool(true, "月ラベルに実際の月番号を表示(例:9月)", group="実績テーブル")
+showQualityRow = input.bool(true, "品質フィルター行を表示【v11.0新規】", group="実績テーブル", tooltip="現在のフィルターモード、採用件数、見送り件数、直近シグナルの判定内訳を表示します。\n\n【v13.2】コンパクト表示モードがONの間はこの設定に関わらず常に非表示になります(通常モードでのみ有効)。")
+numLots = input.float(10.0, "ロット数", minval=0.000001, step=1.0, group="建玉・円換算")
+contractSize = input.float(1.0, "1ロットあたりの数量", minval=0.000001, step=0.01, group="建玉・円換算", tooltip="1ロットが何単位に相当するか。ブローカーの契約仕様書で必ず確認してください。\n・XAUUSD(FXTF GX 商品CFD): 1ロット=1トロイオンス【要確認】")
+rateMode = input.string("自動取得", "為替レート", options=["自動取得", "手動指定", "換算しない"], group="建玉・円換算")
+fxSymbolOverride = input.string("", "為替シンボル上書き(空欄=自動)", group="建玉・円換算")
+manualRateInput = input.float(150.0, "手動レート(1建値通貨=X円)", minval=0.000001, step=0.1, group="建玉・円換算")
+// ══════════════════════════════════════════════════════════════════════════════
+// ── ⑥Range Filter BUY/SELLフラグ【v14.3で単一エンジンに簡素化・視覚情報+アラート専用】
+//   原案 @DonovanWall / 改変 @guikroth / v5化 @tvennのネイティブなstop-and-reverse
+//   判定のみ。v14.0〜v14.2にあった①②の使い分け・trend/SSL/フィルター一致条件・
+//   💰部分利確後限定などの条件は全て削除し、原型のBUY/SELLフラグ設定だけに戻した。
+// ══════════════════════════════════════════════════════════════════════════════
+grp_rf = "⑥Range Filter BUY/SELLフラグ(視覚情報+アラート専用)"
+rfEnable = input.bool(true, "Range Filterを表示", group=grp_rf, tooltip="Range Filter(原案 @DonovanWall / 改変 @guikroth / v5化 @tvenn)のネイティブなstop-and-reverse BUY/SELLフラグを検出し、ラベル表示とalertcondition/alert()のみを行います。\n\nATR Bollingers自体のtrendState/SSL/ポジション状態などとは一切連動せず、エントリー・決済・保護ストップ・💰部分利確・品質フィルターR1の判定にも使いません。")
+rfPeriod = input.int(100, "サンプリング期間", minval=2, maxval=500, group=grp_rf, tooltip="平滑化平均レンジの算出期間。Range Filter原案の既定値100を踏襲。")
+rfMult = input.float(3.0, "レンジ倍率", minval=0.1, maxval=10.0, step=0.1, group=grp_rf, tooltip="大きいほどフィルタが鈍感になりBUY/SELLフラグの反転回数が減ります。Range Filter原案の既定値3.0を踏襲。")
+rfShowLine = input.bool(true, "RFラインを表示", group=grp_rf)
+rfShowMarker = input.bool(true, "BUY/SELLマーカーを表示", group=grp_rf)
+showRfRow = input.bool(true, "実績テーブルにRF検出状況行を表示", group=grp_rf)
+// ══════════════════════════════════════════════════════════════════════════════
+// ── ⑦ChoCh(構造転換)【v14.1新規・視覚情報+アラートのみ】─────────────────────
+//   Universal Swing[3935P] v2.11の「⑧ChoCh(構造転換)」ブロックを移植したもの。
+//   エントリー・決済・保護ストップ・💰部分利確・品質フィルターR1・Range Filter併用の
+//   判定ロジックには一切接続しない、完全に独立した表示+アラート専用レイヤー。
+// ══════════════════════════════════════════════════════════════════════════════
+grp_choch = "⑦ChoCh(構造転換)【v14.1新規・視覚情報+アラートのみ】"
+chochShow = input.bool(true, "ChoCh表示", group=grp_choch, tooltip="構造転換(Change of Character)。ピボット高値/安値(chochLeftBars/chochRightBars基準)を、直前の構造方向と逆向きに終値で明確に抜けた最初の1回を検出する。\n\nUniversal Swing[3935P] v2.11のChoCh機能を移植したもの(ピボット±ATRバッファ・水準消費・クールダウン・初回検出バイアス修正込み)。\n\n【重要】このON/OFFは表示とalert()のみに影響します。エントリー・決済・RF併用・品質フィルターの判定には一切使われません。")
+chochLeftBars = input.int(5, "Swing Left Bars", minval=1, maxval=50, group=grp_choch, tooltip="ChoCh専用のピボット検出パラメータ。ATR Bollingersにはzigzag/構造機能が無いため、Universal Swingのように既存の構造パラメータを流用せず新設した。既定値はUniversal Swing側の既定(5)を踏襲。")
+chochRightBars = input.int(5, "Swing Right Bars", minval=1, maxval=50, group=grp_choch, tooltip="ピボット確定には右側にこの本数の確定足が必要(本質的な確定遅延。値が後から書き換わるリペイントではない)。")
+chochBufAtr = input.float(0.3, "ブレイク判定バッファ(ATR倍)", minval=0.0, maxval=2.0, step=0.05, group=grp_choch, tooltip="ピボット水準をATR×この倍率だけ明確に超えて初めてブレイクと判定し、水準ちょうどでの往復ノイズを抑制する。ATRは既存の safeATR(ATR期間=atrPeriod)をそのまま流用し、新規のta.atr()は追加していない。Universal Swingの既定値0.3を踏襲。※理論値・未検証")
+chochConsume = input.bool(true, "同一水準の再ブレイクを禁止(水準消費)", group=grp_choch, tooltip="ONの場合、一度ブレイクした水準は消費済みとなり、新しいピボットが形成されるか方向転換するまで同じ水準では再検出しない。")
+chochCooldown = input.int(10, "ChoCh検出クールダウン(bar)", minval=1, maxval=100, group=grp_choch, tooltip="直前のChoCh(またはBOS)検出からこの本数が経過するまで、次の検出を行わない。")
+chochStruct = input.bool(true, "構造ラインを表示", group=grp_choch, tooltip="ブレイクされたピボット水準から現在バーまでの水平線を描画する(色=白・幅=1固定。Universal Swingと同一の見た目)。")
+chochShowLabel = input.bool(true, "ChoChラベル(文字)を表示【v14.6新規】", group=grp_choch, tooltip="「ChoCh ↑」「ChoCh ↓」の文字ラベルだけを個別に表示/非表示します。\n\nスタイルタブの「ラベル」(全label.new描画の一括切替)とは独立しており、他のラベル(BUY/SELLフラグ・⊘見送り・✔通過)に影響せずChoChの文字だけを切り替えられます。\n\nOFFにしても構造ライン・背景色・ChoCh検出・アラート・実績テーブルのChoCh行は従来どおり動作します。")
+showBos = input.bool(false, "BOS(構造継続)シグナルも表示", group=grp_choch, tooltip="ChoCh(初回の構造転換)が確定した後、同じ方向へさらに構造を更新して継続する動きをBOS(Break of Structure)として別途表示する。ChoChより控えめな配色(グレー点線)で区別する。\n\n※有効性・既定パラメータともに未検証【わかりません】。ChoCh同様、水準消費・クールダウンの対象になる。")
+showChochRow = input.bool(true, "実績テーブルにChoCh行を表示", group=grp_choch)
+chochBgEnable = input.bool(false, "ChoCh後の背景色を有効化", group=grp_choch, tooltip="直近に確定したChoCh(構造転換)の方向に応じて、次に反対方向のChoChが検出されるまでチャート背景色を着色します(bgcolor)。\n\n【重要】表示専用です。既存のchDir/chDirSet(v14.1のChoCh検出ロジックが確定させる値)を読むだけで、①エントリー核心・②リスク管理・③品質フィルターR1・⑥Range Filter・ChoCh検出自体の判定には一切使いません。")
+chochBgBullColor = input.color(color.new(color.lime, 90), "背景色: ChoCh↑後(強気構造)", group=grp_choch, tooltip="ChoCh↑(強気転換)確定後、次のChoCh↓が出るまでの背景色。色相・透明度ともにこのカラーピッカーで指定できます。")
+chochBgBearColor = input.color(color.new(color.red, 90), "背景色: ChoCh↓後(弱気構造)", group=grp_choch, tooltip="ChoCh↓(弱気転換)確定後、次のChoCh↑が出るまでの背景色。色相・透明度ともにこのカラーピッカーで指定できます。")
+//==============================================================================
+// 定数・カラー
+//==============================================================================
+EPSILON = 0.0001
+bullColor = color.new(#4caf50, 0)
+bearColor = color.new(#f44336, 0)
+neutralColor = color.new(#808080, 50)
+posColor = color.new(#26a69a, 0)
+negColor = color.new(#ef5350, 0)
+exitColor = color.new(#9e9e9e, 0)
+darkTextColor = color.new(#c5c9d3, 0)
+skipColor = color.new(#78909c, 0)
+headerBgColor = color.new(#0a0d12, 0)
+rowBgColor1 = color.new(#12151c, 0)
+rowBgColor2 = color.new(#181c25, 0)
+tableBorderColor = color.new(#242833, 0)
+posRowBg = color.new(#0f2a22, 0)
+negRowBg = color.new(#2a1414, 0)
+flatRowBg = color.new(#181c25, 0)
+posTextStrong = color.new(#2ee6a1, 0)
+negTextStrong = color.new(#ff6259, 0)
+//==============================================================================
+// 為替レート取得(グローバルスコープで無条件実行)
+//==============================================================================
+isJpyQuote = syminfo.currency == "JPY"
+autoFxTicker = "FX_IDC:" + syminfo.currency + "JPY"
+fxTicker = fxSymbolOverride != "" ? fxSymbolOverride : autoFxTicker
+liveFxRate = request.security(fxTicker, timeframe.period, close, ignore_invalid_symbol = true)
+builtinFxRate = request.currency_rate(syminfo.currency, "JPY")
+isAutoRate = rateMode == "自動取得"
+isManualRate = rateMode == "手動指定"
+isNoConvert = rateMode == "換算しない"
+useLiveFx = isAutoRate and not isJpyQuote and not na(liveFxRate)
+useBuiltinFx = isAutoRate and not isJpyQuote and na(liveFxRate)
+autoResolvedRate = isJpyQuote ? 1.0 : not na(liveFxRate) ? liveFxRate : builtinFxRate
+resolvedRate = isManualRate ? manualRateInput : isNoConvert ? na : autoResolvedRate
+lotUnits = numLots * contractSize
+moneyMult = isNoConvert ? lotUnits : lotUnits * resolvedRate
+//==============================================================================
+// 計算(全ta.*はグローバルスコープで無条件実行)
+//==============================================================================
+baselineRaw = ta.ema(close, baselinePeriod)
+baseline = ta.ema(baselineRaw, smoothing)
+atrValue = ta.atr(atrPeriod)
+safeATR = math.max(atrValue, EPSILON)
+protectiveAtrValue = ta.atr(protectiveStopAtrLen)
+safeProtectiveAtr = math.max(protectiveAtrValue, EPSILON)
+thresholdRaw = thresholdMode == "ATR倍率" ? safeATR * atrMultiplier : fixedThreshold
+thresholdValue = enableHysteresis ? thresholdRaw : 0.0
+upperThreshold = baseline + thresholdValue
+lowerThreshold = baseline - thresholdValue
+var int trendState = 0
+if close > upperThreshold
+    trendState := 1
+else if close < lowerThreshold
+    trendState := -1
+bbBasis = ta.sma(close, bbLength)
+bbDev = math.max(ta.stdev(close, bbLength), EPSILON)
+upperBB = bbBasis + bbDev * bbMultiplier
+lowerBB = bbBasis - bbDev * bbMultiplier
+var bool bbUpperTouched = false
+var bool bbLowerTouched = false
+barTouchesUpper = high >= upperBB
+barTouchesLower = low <= lowerBB
+bbReturnFromUpper = showBbTouchMarker and bbUpperTouched and not barTouchesUpper
+bbReturnFromLower = showBbTouchMarker and bbLowerTouched and not barTouchesLower
+if barTouchesUpper
+    bbUpperTouched := true
+else if bbUpperTouched
+    bbUpperTouched := false
+if barTouchesLower
+    bbLowerTouched := true
+else if bbLowerTouched
+    bbLowerTouched := false
+f_ma(src, simple int len, t) =>
+    switch t
+        "SMA" => ta.sma(src, len)
+        "EMA" => ta.ema(src, len)
+        => ta.wma(src, len)
+maValue = f_ma(maSource, maLength, maTypeInput)
+rsiValue = ta.rsi(close, rsiLen)
+rsiSma = ta.sma(rsiValue, rsiSmaLen)
+rsiXupOs = ta.crossover(rsiValue, rsiOs)
+rsiXdnOb = ta.crossunder(rsiValue, rsiOb)
+//==============================================================================
+// SSLチャネル計算
+//   【v11.0で役割変更】v10.4〜v10.9は視覚表示専用だったが、v11.0からは
+//   エントリー品質フィルターR1(SSL方向一致)の判定にも使用する。
+//   R1の方向判定は「終値 vs SMA(high,len) / SMA(low,len)」で行う。
+//   これはバックテストで使用した定義と同一であり、下の sslWicks(帯の色分け用)
+//   の設定には影響されない【設計上の判断＝検証済みの定義を維持するため】。
+//==============================================================================
+sslMa1 = ta.sma(high, sslLen)
+sslMa2 = ta.sma(low, sslLen)
+sslValid = not na(sslMa1) and not na(sslMa2)
+sslSrcHi = sslWicks ? high : close
+sslSrcLo = sslWicks ? low : close
+var int sslHlv = 0
+sslHlv := not sslValid ? nz(sslHlv[1], 0) : sslSrcHi > sslMa1 ? 1 : sslSrcLo < sslMa2 ? -1 : nz(sslHlv[1], 0)
+sslUpLine = sslHlv < 0 ? sslMa2 : sslMa1
+sslDownLine = sslHlv < 0 ? sslMa1 : sslMa2
+sslBull = sslHlv == 1
+sslBear = sslHlv == -1
+// R1判定用の方向(終値基準・検証済み定義)
+int sslDirNum = not sslValid ? 0 : close > sslMa1 ? 1 : close < sslMa2 ? -1 : 0
+//==============================================================================
+// ChoCh(構造転換)検出【v14.1新規・Universal Swing[3935P] v2.11より移植】
+//   視覚情報+アラート専用。エントリー・決済・RF併用・品質フィルターの判定には
+//   一切接続しない完全独立レイヤー(下記の全変数はch*接頭辞で統一)。
+//   ATRバッファは既存のsafeATR(atrPeriod)を再利用し、新規ta.atr()は追加しない。
+//   ピボットはUniversal SwingのMTF(time基準)追跡と異なり、単一TFのため
+//   bar_index基準で追跡する(chBarHigh := bar_index - chochRightBars)。
+//==============================================================================
+float chPh = ta.pivothigh(high, chochLeftBars, chochRightBars)
+float chPl = ta.pivotlow(low, chochLeftBars, chochRightBars)
+var float chLvlHigh = na
+var float chLvlLow = na
+var int chBarHigh = na
+var int chBarLow = na
+var bool chUsedHigh = false
+var bool chUsedLow = false
+var bool chDir = false
+var bool chDirSet = false
+var int chLastBar = na
+var int chochUpCount = 0
+var int chochDnCount = 0
+var int bosUpCount = 0
+var int bosDnCount = 0
+if not na(chPh)
+    chLvlHigh := chPh
+    chBarHigh := bar_index - chochRightBars
+    chUsedHigh := false
+if not na(chPl)
+    chLvlLow := chPl
+    chBarLow := bar_index - chochRightBars
+    chUsedLow := false
+chBuf = safeATR * chochBufAtr
+chUpLvl = na(chLvlHigh) ? na : chLvlHigh + chBuf
+chDnLvl = na(chLvlLow) ? na : chLvlLow - chBuf
+chXUp = not na(chUpLvl) and not na(chUpLvl[1]) and close > chUpLvl and close[1] <= chUpLvl[1]
+chXDn = not na(chDnLvl) and not na(chDnLvl[1]) and close < chDnLvl and close[1] >= chDnLvl[1]
+chFreeUp = (not chochConsume) or (not chUsedHigh)
+chFreeDn = (not chochConsume) or (not chUsedLow)
+chCoolOk = na(chLastBar) or (bar_index - chLastBar) >= chochCooldown
+// 方向ゲート: 初回確定前(chDirSet=false)はどちらの向きも開放。確定後は「逆方向のみ」がChoCh、「同方向」はBOS。
+chGateChochUp = (not chDirSet) or (not chDir)
+chGateChochDn = (not chDirSet) or chDir
+chGateBosUp = chDirSet and chDir
+chGateBosDn = chDirSet and (not chDir)
+chochUp = chochShow and chXUp and chGateChochUp and chFreeUp and chCoolOk and barstate.isconfirmed
+chochDn = chochShow and chXDn and chGateChochDn and chFreeDn and chCoolOk and barstate.isconfirmed
+bosUp = showBos and chXUp and chGateBosUp and chFreeUp and chCoolOk and barstate.isconfirmed
+bosDn = showBos and chXDn and chGateBosDn and chFreeDn and chCoolOk and barstate.isconfirmed
+if chochUp
+    chDir := true
+    chDirSet := true
+    chUsedHigh := true
+    chLastBar := bar_index
+    chochUpCount := chochUpCount + 1
+if chochDn
+    chDir := false
+    chDirSet := true
+    chUsedLow := true
+    chLastBar := bar_index
+    chochDnCount := chochDnCount + 1
+if bosUp
+    chUsedHigh := true
+    chLastBar := bar_index
+    bosUpCount := bosUpCount + 1
+if bosDn
+    chUsedLow := true
+    chLastBar := bar_index
+    bosDnCount := bosDnCount + 1
+//── ChoCh方向の背景色【v14.4新規】chDir/chDirSetを読むだけの表示専用レイヤー ──
+//   直近に確定したChoChの方向を次の反対方向ChoChが検出されるまで維持して着色する。
+//   chDir/chDirSetへの書き込みはしない(上のChoCh検出ブロックが確定させた値を再利用)。
+chochBgColor = (not chochBgEnable or not chDirSet) ? na : chDir ? chochBgBullColor : chochBgBearColor
+//==============================================================================
+// Range Filter BUY/SELLフラグ【v14.3で単一エンジンに簡素化】
+//   原案 @DonovanWall / 改変 @guikroth / v5化 @tvenn。ネイティブなstop-and-reverse
+//   判定(filtのトレンド転換)のみを検出する単一エンジン。ATR Bollingers自体の
+//   trendState/SSL/position等とは一切連動しない、完全に独立した表示+アラート専用
+//   レイヤー(視覚情報+アラートのみ・売買判定には一切使わない)。
+//   計算自体は無条件実行(ta.*をif内に置かないためCE10156を回避する)。
+//   lengthを受ける関数の仮引数は simple int で明示する(v11.1のCE10123対策と同一理由)。
+//==============================================================================
+f_smoothrng(float x, simple int t, float m) =>
+    float avrng = ta.ema(math.abs(x - x[1]), t)
+    ta.ema(avrng, t * 2 - 1) * m
+f_rngfilt(float x, float r) =>
+    float rf = x
+    rf := x > nz(rf[1]) ? (x - r < nz(rf[1]) ? nz(rf[1]) : x - r) : (x + r > nz(rf[1]) ? nz(rf[1]) : x + r)
+    rf
+rfSmrng = f_smoothrng(close, rfPeriod, rfMult)
+rfFilt = f_rngfilt(close, rfSmrng)
+float rfUp = 0.0
+rfUp := rfFilt > rfFilt[1] ? nz(rfUp[1]) + 1 : rfFilt < rfFilt[1] ? 0 : nz(rfUp[1])
+float rfDn = 0.0
+rfDn := rfFilt < rfFilt[1] ? nz(rfDn[1]) + 1 : rfFilt > rfFilt[1] ? 0 : nz(rfDn[1])
+rfLongCond = close > rfFilt and rfUp > 0
+rfShortCond = close < rfFilt and rfDn > 0
+var int rfState = 0
+rfState := rfLongCond ? 1 : rfShortCond ? -1 : nz(rfState[1])
+rfFlipBuy = rfLongCond and nz(rfState[1]) == -1
+rfFlipSell = rfShortCond and nz(rfState[1]) == 1
+rfBuySignal = rfEnable and rfFlipBuy and barstate.isconfirmed
+rfSellSignal = rfEnable and rfFlipSell and barstate.isconfirmed
+var int rfBuyCount = 0
+var int rfSellCount = 0
+if rfBuySignal
+    rfBuyCount := rfBuyCount + 1
+if rfSellSignal
+    rfSellCount := rfSellCount + 1
+//==============================================================================
+// エントリー品質フィルター(見送り判定)【v11.0新規 / v12.0でR1のみに整理】
+//==============================================================================
+bool qfR1On = qfUseSSL
+f_qualityCheck(int d) =>
+    bool f1 = qfR1On and sslDirNum != d
+    string rs = ""
+    if f1
+        rs := rs + "R1 SSL方向不一致(SSL=" + (sslDirNum == 1 ? "強気" : sslDirNum == -1 ? "弱気" : "中立") + ")\n"
+    bool ok = not f1
+    [ok, rs]
+[qOkBuy, qWhyBuy] = f_qualityCheck(1)
+[qOkSell, qWhySell] = f_qualityCheck(-1)
+//==============================================================================
+// フィルター条件(エントリーのみに適用。決済には一切影響しない)
+//==============================================================================
+bbSlopeRefValue = bbBasis[bbSlopeLookback]
+bbSlopeUp = not na(bbSlopeRefValue) and bbBasis > bbSlopeRefValue
+bbSlopeDn = not na(bbSlopeRefValue) and bbBasis < bbSlopeRefValue
+baselineBelowMA = baseline < maValue
+baselineAboveMA = baseline > maValue
+sellFilterOk = not enableTrendFilter or not bbSlopeUp or baselineBelowMA
+buyFilterOk = not enableTrendFilter or not bbSlopeDn or baselineAboveMA
+var int lastRevUpBar = na
+var int lastRevDnBar = na
+revUpRaw = showRsiRev and rsiXupOs
+revDnRaw = showRsiRev and rsiXdnOb
+revUp = revUpRaw and (na(lastRevUpBar) or bar_index - lastRevUpBar >= rsiRevCooldown)
+revDn = revDnRaw and (na(lastRevDnBar) or bar_index - lastRevDnBar >= rsiRevCooldown)
+if revUp
+    lastRevUpBar := bar_index
+if revDn
+    lastRevDnBar := bar_index
+//==============================================================================
+// トレード管理
+//==============================================================================
+var array<float> tPnlMoney = array.new<float>(0)
+var array<float> tEntryPx = array.new<float>(0)
+var array<int> tEntryBar = array.new<int>(0)
+var array<bool> tStopped = array.new<bool>(0)
+var array<bool> tGapped = array.new<bool>(0)
+var int trackedMonthKey = na
+var float monthRealizedAccum = 0.0
+var int monthTradeCountAccum = 0
+var float lastMonthRealizedAccum = na
+var int lastMonthTradeCountAccum = na
+var float twoMonthsAgoRealizedAccum = na
+var int twoMonthsAgoTradeCountAccum = na
+var int lastMonthMonthNum = na
+var int twoMonthsAgoMonthNum = na
+currentMonthKey = year * 100 + month
+if na(trackedMonthKey) or currentMonthKey != trackedMonthKey
+    if not na(trackedMonthKey)
+        twoMonthsAgoRealizedAccum := lastMonthRealizedAccum
+        twoMonthsAgoTradeCountAccum := lastMonthTradeCountAccum
+        twoMonthsAgoMonthNum := lastMonthMonthNum
+        lastMonthRealizedAccum := monthRealizedAccum
+        lastMonthTradeCountAccum := monthTradeCountAccum
+        lastMonthMonthNum := trackedMonthKey % 100
+    monthRealizedAccum := 0.0
+    monthTradeCountAccum := 0
+    trackedMonthKey := currentMonthKey
+var int position = 0
+var float entryPrice = na
+var int entryBarIdx = na
+var int entryTimeStamp = na
+var float positionFraction = 0.0
+var int revTakeCount = 0
+var float protectiveStopPrice = na
+var bool pendingLong = false
+var bool pendingShort = false
+var int qfSkipCount = 0
+var int qfPassCount = 0
+f_recordTrade(pnlPt, w, epx, ebar, stopped, gapped) =>
+    tradeMoney = pnlPt * w * moneyMult
+    array.push(tPnlMoney, tradeMoney)
+    array.push(tEntryPx, epx)
+    array.push(tEntryBar, ebar)
+    array.push(tStopped, stopped)
+    array.push(tGapped, gapped)
+    if array.size(tPnlMoney) > maxTrades
+        array.shift(tPnlMoney)
+        array.shift(tEntryPx)
+        array.shift(tEntryBar)
+        array.shift(tStopped)
+        array.shift(tGapped)
+    tradeMoney
+reversalExitLongSel = trendState == -1
+reversalExitShortSel = trendState == 1
+reversalExitLong = position == 1 and positionFraction > EPSILON and reversalExitLongSel
+reversalExitShort = position == -1 and positionFraction > EPSILON and reversalExitShortSel
+reversalWillExit = reversalExitLong or reversalExitShort
+// 【v11.0】stopPriorityOverReversal=ON の場合、同一バーで反転決済条件が成立していても
+// 保護ストップ(low/high判定)を優先して先に執行する。OFFにするとv10.9と同一挙動。
+stopGateLong = stopPriorityOverReversal or not reversalWillExit
+stopGateShort = stopPriorityOverReversal or not reversalWillExit
+hitProtectiveStopLong = enableProtectiveStop and position == 1 and positionFraction > EPSILON and not na(protectiveStopPrice) and low <= protectiveStopPrice and stopGateLong
+hitProtectiveStopShort = enableProtectiveStop and position == -1 and positionFraction > EPSILON and not na(protectiveStopPrice) and high >= protectiveStopPrice and stopGateShort
+hitProtectiveStop = hitProtectiveStopLong or hitProtectiveStopShort
+bool gapStopExit = false
+float gapStopFill = na
+float gapStopSlip = na
+if hitProtectiveStopLong and open < protectiveStopPrice
+    gapStopExit := true
+    gapStopFill := open
+    gapStopSlip := protectiveStopPrice - open
+if hitProtectiveStopShort and open > protectiveStopPrice
+    gapStopExit := true
+    gapStopFill := open
+    gapStopSlip := open - protectiveStopPrice
+if hitProtectiveStop
+    stopFillPrice = gapStopExit ? gapStopFill : protectiveStopPrice
+    stopPnl = hitProtectiveStopLong ? stopFillPrice - entryPrice : entryPrice - stopFillPrice
+    stopTradeMoney = f_recordTrade(stopPnl, positionFraction, entryPrice, entryBarIdx, true, gapStopExit)
+    monthRealizedAccum := monthRealizedAccum + stopTradeMoney
+    monthTradeCountAccum := monthTradeCountAccum + 1
+    position := 0
+    positionFraction := 0.0
+    revTakeCount := 0
+    protectiveStopPrice := na
+exitLongNow = reversalExitLong and position == 1
+exitShortNow = reversalExitShort and position == -1
+principalExit = exitLongNow or exitShortNow
+if principalExit
+    exitPnl = exitLongNow ? close - entryPrice : entryPrice - close
+    principalTradeMoney = f_recordTrade(exitPnl, positionFraction, entryPrice, entryBarIdx, false, false)
+    monthRealizedAccum := monthRealizedAccum + principalTradeMoney
+    monthTradeCountAccum := monthTradeCountAccum + 1
+    position := 0
+    positionFraction := 0.0
+    revTakeCount := 0
+    protectiveStopPrice := na
+revExitLong = enablePartialExit and position == 1 and positionFraction > EPSILON and revDn
+revExitShort = enablePartialExit and position == -1 and positionFraction > EPSILON and revUp
+if revExitLong or revExitShort
+    closeWeight = revTakeCount == 0 ? 0.5 : positionFraction
+    closedPnl = revExitLong ? close - entryPrice : entryPrice - close
+    revTradeMoney = f_recordTrade(closedPnl, closeWeight, entryPrice, entryBarIdx, false, false)
+    monthRealizedAccum := monthRealizedAccum + revTradeMoney
+    monthTradeCountAccum := monthTradeCountAccum + 1
+    positionFraction := positionFraction - closeWeight
+    revTakeCount := revTakeCount + 1
+    if positionFraction <= EPSILON
+        position := 0
+        positionFraction := 0.0
+        revTakeCount := 0
+        protectiveStopPrice := na
+prevTrendState = nz(trendState[1], 0)
+if trendState == 1 and prevTrendState <= 0
+    pendingLong := true
+if trendState == -1 and prevTrendState >= 0
+    pendingShort := true
+if trendState != 1
+    pendingLong := false
+if trendState != -1
+    pendingShort := false
+rawBuySignal = pendingLong and buyFilterOk and position != 1
+rawSellSignal = pendingShort and sellFilterOk and position != -1
+buySignal = rawBuySignal and qOkBuy
+sellSignal = rawSellSignal and qOkSell
+skipBuySignal = rawBuySignal and not qOkBuy
+skipSellSignal = rawSellSignal and not qOkSell
+anySkipSignal = skipBuySignal or skipSellSignal
+skipBuyFirst = skipBuySignal and not skipBuySignal[1]
+skipSellFirst = skipSellSignal and not skipSellSignal[1]
+anySkipFirst = skipBuyFirst or skipSellFirst
+if anySkipFirst
+    qfSkipCount := qfSkipCount + 1
+if anySkipSignal
+    if qfClearPending
+        pendingLong := false
+        pendingShort := false
+// ★仕様変更の帰結【事実】(v14.2〜継続): 実際の売買判定はbuySignal/sellSignal
+//   (閾値クロス)のみで決まる。Range FilterのBUY/SELLフラグ(rfBuySignal/rfSellSignal、
+//   ⑥で計算済み)はここでは一切参照しない(視覚情報+アラート専用のため)。
+anyEntryBuy = buySignal
+anyEntrySell = sellSignal
+if anyEntryBuy or anyEntrySell
+    position := anyEntryBuy ? 1 : -1
+    entryPrice := close
+    entryBarIdx := bar_index
+    entryTimeStamp := time
+    positionFraction := 1.0
+    revTakeCount := 0
+    pendingLong := false
+    pendingShort := false
+    qfPassCount := qfPassCount + 1
+    protectiveStopPrice := enableProtectiveStop ? (anyEntryBuy ? close - safeProtectiveAtr * protectiveStopAtrMult : close + safeProtectiveAtr * protectiveStopAtrMult) : na
+exitOnly = showExitOnlyMarker and principalExit and not anyEntryBuy and not anyEntrySell
+//==============================================================================
+// ローソク足色付け(ポジション状態ベース / v13.1)
+//==============================================================================
+candleColor = enableCandleColor ? (position == 0 ? barNeutralColor : trendState == 1 ? barBullColor : trendState == -1 ? barBearColor : barNeutralColor) : na
+barcolor(candleColor)
+//==============================================================================
+// 描画(plot系 → Y軸スケール確定)
+//==============================================================================
+baselineColor = trendState == 1 ? bullColor : trendState == -1 ? bearColor : neutralColor
+plot(baseline, color=baselineColor, linewidth=3, title="ベースライン")
+showBands = enableBB and showBBBands
+plot(showBands ? bbBasis : na, color=bbLineColor, linewidth=1, title="BB中央")
+plot(showBands ? upperBB : na, color=bbLineColor, linewidth=1, title="BB上限")
+plot(showBands ? lowerBB : na, color=bbLineColor, linewidth=1, title="BB下限")
+plot(showMA ? maValue : na, color=maLineColor, linewidth=2, title="MA/EMA/WMA")
+plot(enableProtectiveStop and position != 0 ? protectiveStopPrice : na, title="保護ストップ", color=color.new(#d32f2f, 0), style=plot.style_cross, linewidth=1)
+sslLineColor = sslBull ? bullColor : sslBear ? bearColor : neutralColor
+sslUpPlot = plot(enableSSL and sslValid ? sslUpLine : na, color=sslLineColor, linewidth=2, title="SSL上")
+sslDownPlot = plot(enableSSL and sslValid ? sslDownLine : na, color=sslLineColor, linewidth=2, title="SSL下")
+fill(sslUpPlot, sslDownPlot, title="SSL帯", color=enableSSL and sslFillOn ? color.new(sslLineColor, 91) : na)
+rfLineColor = rfUp > 0 ? bullColor : rfDn > 0 ? bearColor : neutralColor
+plot(rfEnable and rfShowLine ? rfFilt : na, title="Range Filter", color=rfLineColor, linewidth=2)
+//==============================================================================
+// シグナル表示(Y座標はlocation.abovebar/belowbarで固定)
+//==============================================================================
+plotshape(isLabelTriangle and buySignal, title="BUY(三角)", location=location.belowbar, style=shape.triangleup, size=size.small, color=color.new(#00ff00, 0), textcolor=color.white, text="BUY")
+plotshape(isLabelTriangle and sellSignal, title="SELL(三角)", location=location.abovebar, style=shape.triangledown, size=size.small, color=color.new(#ff0000, 0), textcolor=color.white, text="SELL")
+if isLabelFlag and buySignal
+    label.new(bar_index, low, "BUY\n" + str.tostring(close, format.mintick), style=label.style_label_up, color=color.new(#22c55e, 0), textcolor=color.white, size=size.normal, yloc=yloc.belowbar)
+if isLabelFlag and sellSignal
+    label.new(bar_index, high, "SELL\n" + str.tostring(close, format.mintick), style=label.style_label_down, color=color.new(#ef4444, 0), textcolor=color.white, size=size.normal, yloc=yloc.abovebar)
+if isLabelPlate and buySignal
+    label.new(bar_index, low, "LONG\n" + str.tostring(close, format.mintick), style=label.style_label_up, color=color.new(#22c55e, 0), textcolor=color.white, size=size.small, yloc=yloc.belowbar)
+if isLabelPlate and sellSignal
+    label.new(bar_index, high, "SHORT\n" + str.tostring(close, format.mintick), style=label.style_label_down, color=color.new(#ef4444, 0), textcolor=color.white, size=size.small, yloc=yloc.abovebar)
+//==============================================================================
+// 見送り(スキップ)表示【v11.0新規】
+//==============================================================================
+plotchar(qfShowSkipMarker and skipBuyFirst, title="⊘見送りマーカー(買い)", char=qfSkipMarkerChar, location=location.belowbar, size=size.small, color=skipColor)
+plotchar(qfShowSkipMarker and skipSellFirst, title="⊘見送りマーカー(売り)", char=qfSkipMarkerChar, location=location.abovebar, size=size.small, color=skipColor)
+if qfShowSkipLabel and skipBuyFirst
+    label.new(bar_index, low, "⊘見送り 買\n" + qWhyBuy + str.tostring(close, format.mintick), style=label.style_label_up, color=color.new(#37474f, 15), textcolor=color.new(#eceff1, 0), size=size.small, yloc=yloc.belowbar)
+if qfShowSkipLabel and skipSellFirst
+    label.new(bar_index, high, "⊘見送り 売\n" + qWhySell + str.tostring(close, format.mintick), style=label.style_label_down, color=color.new(#37474f, 15), textcolor=color.new(#eceff1, 0), size=size.small, yloc=yloc.abovebar)
+if qfShowPassLabel and buySignal
+    label.new(bar_index, low, "✔通過 買\nSSL " + (sslDirNum == 1 ? "強気" : sslDirNum == -1 ? "弱気" : "中立"), style=label.style_label_up, color=color.new(#1b5e20, 20), textcolor=color.white, size=size.tiny, yloc=yloc.belowbar)
+if qfShowPassLabel and sellSignal
+    label.new(bar_index, high, "✔通過 売\nSSL " + (sslDirNum == 1 ? "強気" : sslDirNum == -1 ? "弱気" : "中立"), style=label.style_label_down, color=color.new(#b71c1c, 20), textcolor=color.white, size=size.tiny, yloc=yloc.abovebar)
+plotchar(exitOnly, title="✕決済のみ", char=exitOnlyMarkerChar, location=location.abovebar, size=size.small, color=exitColor)
+plotchar(showStopMarker and hitProtectiveStopLong, title="🛑保護ストップ(ロング決済)", char=stopMarkerChar, location=location.belowbar, size=size.small, color=negColor)
+plotchar(showStopMarker and hitProtectiveStopShort, title="🛑保護ストップ(ショート決済)", char=stopMarkerChar, location=location.abovebar, size=size.small, color=negColor)
+plotchar(showGapMarker and hitProtectiveStopLong and gapStopExit, title="⛔窓抜け(ロング決済)", char=gapMarkerChar, location=location.belowbar, size=size.tiny, color=color.new(#ff9800, 0))
+plotchar(showGapMarker and hitProtectiveStopShort and gapStopExit, title="⛔窓抜け(ショート決済)", char=gapMarkerChar, location=location.abovebar, size=size.tiny, color=color.new(#ff9800, 0))
+plotchar(revExitShort, title="💰ショート部分利確", char=revMarkerChar, location=location.belowbar, size=size.small, color=color.new(#00bcd4, 0))
+plotchar(revExitLong, title="💰ロング部分利確", char=revMarkerChar, location=location.abovebar, size=size.small, color=color.new(#ff6d00, 0))
+plotchar(bbReturnFromLower, title="💎BB下限タッチ&リターン(反発)", char=bbTouchMarkerChar, location=location.belowbar, size=size.small, color=color.new(#9c27b0, 0))
+plotchar(bbReturnFromUpper, title="💎BB上限タッチ&リターン(反落)", char=bbTouchMarkerChar, location=location.abovebar, size=size.small, color=color.new(#9c27b0, 0))
+//── Range Filter BUY/SELLマーカー【v14.3・視覚情報のみ】Y座標はlocation指定で固定 ──
+plotshape(rfEnable and rfShowMarker and rfBuySignal, title="RF BUY", location=location.belowbar, style=shape.triangleup, size=size.tiny, color=color.new(#00e5ff, 0), textcolor=color.white, text="RF")
+plotshape(rfEnable and rfShowMarker and rfSellSignal, title="RF SELL", location=location.abovebar, style=shape.triangledown, size=size.tiny, color=color.new(#ff9100, 0), textcolor=color.white, text="RF")
+//── ChoCh(構造転換)/BOS(構造継続)描画【v14.1新規】固定仕様:ChoCh=白/BOS=グレー点線 ──
+//   Universal Swing[3935P]と同一の見た目。xloc既定(bar_index)を使うため引数省略。
+//   【v14.6】ChoChの文字ラベルはchochShowLabelで個別に表示/非表示(ラインは chochStruct で独立)。
+if chochStruct and chochUp and not na(chBarHigh)
+    line.new(chBarHigh, chLvlHigh, bar_index, chLvlHigh, color=color.white, width=1, style=line.style_solid)
+if chochShowLabel and chochUp
+    label.new(int(math.avg(nz(chBarHigh, bar_index), bar_index)), chLvlHigh, "ChoCh ↑", style=label.style_label_down, color=color.new(color.black, 100), textcolor=color.white, size=size.small)
+if chochStruct and chochDn and not na(chBarLow)
+    line.new(chBarLow, chLvlLow, bar_index, chLvlLow, color=color.white, width=1, style=line.style_solid)
+if chochShowLabel and chochDn
+    label.new(int(math.avg(nz(chBarLow, bar_index), bar_index)), chLvlLow, "ChoCh ↓", style=label.style_label_up, color=color.new(color.black, 100), textcolor=color.white, size=size.small)
+if showBos and chochStruct and bosUp and not na(chBarHigh)
+    line.new(chBarHigh, chLvlHigh, bar_index, chLvlHigh, color=color.new(color.gray, 40), width=1, style=line.style_dashed)
+if bosUp
+    label.new(int(math.avg(nz(chBarHigh, bar_index), bar_index)), chLvlHigh, "BOS ↑", style=label.style_label_down, color=color.new(color.black, 100), textcolor=color.new(color.gray, 20), size=size.tiny)
+if showBos and chochStruct and bosDn and not na(chBarLow)
+    line.new(chBarLow, chLvlLow, bar_index, chLvlLow, color=color.new(color.gray, 40), width=1, style=line.style_dashed)
+if bosDn
+    label.new(int(math.avg(nz(chBarLow, bar_index), bar_index)), chLvlLow, "BOS ↓", style=label.style_label_up, color=color.new(color.black, 100), textcolor=color.new(color.gray, 20), size=size.tiny)
+//── ChoCh方向の背景色【v14.4新規・視覚情報のみ】既定OFF。chochBgColorは計算済み ──
+bgcolor(chochBgColor, title="ChoCh構造方向の背景色")
+//==============================================================================
+// 金額フォーマット(最終バーでのみ呼ばれる)
+//==============================================================================
+f_fmtGrouped(v) =>
+    s = str.tostring(math.round(math.abs(v)), "#")
+    n = str.length(s)
+    out = ""
+    for i = 0 to n - 1
+        out := str.substring(s, n - 1 - i, n - i) + out
+        if (i + 1) % 3 == 0 and i < n - 1
+            out := "," + out
+    out
+f_amt(v) =>
+    result = "-"
+    if not na(v)
+        if isNoConvert
+            result := str.tostring(v, "#.##") + " " + syminfo.currency
+        else
+            result := (v < 0 ? "-¥" : "¥") + f_fmtGrouped(v)
+    result
+f_amtColor(v) =>
+    na(v) ? darkTextColor : v >= 0 ? posColor : negColor
+f_posRowBg(p) =>
+    p == 1 ? posRowBg : p == -1 ? negRowBg : flatRowBg
+f_pnlRowBg(v) =>
+    na(v) or v == 0 ? flatRowBg : v > 0 ? posRowBg : negRowBg
+f_pnlTextStrong(v) =>
+    na(v) or v == 0 ? darkTextColor : v > 0 ? posTextStrong : negTextStrong
+//==============================================================================
+// テーブルサイズ可変化(v13.2)
+//==============================================================================
+tableSizeDelta = tableSizeInput == "極小" ? -2 : tableSizeInput == "小" ? -1 : tableSizeInput == "大" ? 1 : 0
+f_sizeIndex(string s) =>
+    s == size.tiny ? 0 : s == size.small ? 1 : s == size.normal ? 2 : s == size.large ? 3 : 4
+f_indexSize(int i) =>
+    ci = math.max(0, math.min(4, i))
+    ci == 0 ? size.tiny : ci == 1 ? size.small : ci == 2 ? size.normal : ci == 3 ? size.large : size.huge
+f_sz(string s) =>
+    f_indexSize(f_sizeIndex(s) + tableSizeDelta)
+//==============================================================================
+// 実績テーブル
+//==============================================================================
+tablePos = tablePositionInput == "右上" ? position.top_right : tablePositionInput == "左上" ? position.top_left : tablePositionInput == "右下" ? position.bottom_right : position.bottom_left
+offTwoMonths = showTwoMonthsAgoRow ? 1 : 0
+effectiveShowQuality = showQualityRow and not compactMode
+offQuality = effectiveShowQuality ? 1 : 0
+rowCountOffset = offTwoMonths + offQuality
+offRf = (showRfRow and rfEnable and not compactMode) ? 1 : 0
+offChoch = (showChochRow and chochShow and not compactMode) ? 1 : 0
+var table statsTable = table.new(tablePos, 2, (compactMode ? 7 : 16) + rowCountOffset + offRf + offChoch, border_width=1, border_color=tableBorderColor, frame_width=1, frame_color=tableBorderColor)
+if showStatsTable and barstate.islast
+    nTrades = array.size(tPnlMoney)
+    grossProfit = 0.0
+    grossLoss = 0.0
+    winCount = 0
+    lossCount = 0
+    equity = 0.0
+    peakEquity = 0.0
+    maxDD = 0.0
+    curLossRun = 0
+    maxLossRun = 0
+    stopCount = 0
+    gapCount = 0
+    if nTrades > 0
+        for i = 0 to nTrades - 1
+            v = array.get(tPnlMoney, i)
+            if v > 0
+                grossProfit := grossProfit + v
+            else if v < 0
+                grossLoss := grossLoss - v
+            if not compactMode
+                equity := equity + v
+                peakEquity := math.max(peakEquity, equity)
+                maxDD := math.max(maxDD, peakEquity - equity)
+                if v > 0
+                    winCount := winCount + 1
+                    curLossRun := 0
+                else if v < 0
+                    lossCount := lossCount + 1
+                    curLossRun := curLossRun + 1
+                    maxLossRun := math.max(maxLossRun, curLossRun)
+                if array.get(tStopped, i)
+                    stopCount := stopCount + 1
+                if array.get(tGapped, i)
+                    gapCount := gapCount + 1
+    decided = winCount + lossCount
+    realizedMoney = grossProfit - grossLoss
+    float winRate = na
+    float pf = na
+    float expectancy = na
+    float avgWin = na
+    float avgLoss = na
+    float payoff = na
+    float stopRate = na
+    if not compactMode
+        winRate := decided > 0 ? winCount * 100.0 / decided : na
+        pf := grossLoss > EPSILON ? grossProfit / grossLoss : na
+        expectancy := nTrades > 0 ? realizedMoney / nTrades : na
+        avgWin := winCount > 0 ? grossProfit / winCount : na
+        avgLoss := lossCount > 0 ? grossLoss / lossCount : na
+        payoff := not na(avgWin) and not na(avgLoss) and avgLoss > EPSILON ? avgWin / avgLoss : na
+        stopRate := nTrades > 0 ? stopCount * 100.0 / nTrades : na
+    hasWindow = nTrades > 0
+    windowStartBar = hasWindow ? array.get(tEntryBar, 0) : na
+    spanBars = na(windowStartBar) ? na : bar_index - windowStartBar
+    unrealizedPt = position == 1 ? (close - entryPrice) * positionFraction : position == -1 ? (entryPrice - close) * positionFraction : 0.0
+    unrealizedMoney = position == 0 ? 0.0 : unrealizedPt * moneyMult
+    totalMoney = hasWindow ? realizedMoney + unrealizedMoney : na
+    monthTotalMoney = monthRealizedAccum + unrealizedMoney
+    monthTip = "毎月1日 00:00(取引所ローカル時間)〜現在までのクローズ済み実現損益 ＋ 現在の含み損益\n\n当月クローズ件数: " + str.tostring(monthTradeCountAccum) + "件\n当月実現損益: " + f_amt(monthRealizedAccum) + "\n含み損益: " + f_amt(unrealizedMoney) + "\n\n※件数は「決済の回数」であり、💰部分利確(50%+50%)は1トレードにつき2件としてカウントされます。"
+    thisMonthLabel = showActualMonthLabel ? str.tostring(month) + "月損益\n(" + str.tostring(monthTradeCountAccum) + "件)" : "今月損益\n(" + str.tostring(monthTradeCountAccum) + "件)"
+    lastMonthLabelPrefix = showActualMonthLabel and not na(lastMonthMonthNum) ? str.tostring(lastMonthMonthNum) + "月損益" : "先月損益"
+    totalRowLabel = isTotalRowMonthly ? lastMonthLabelPrefix + "\n(" + (na(lastMonthTradeCountAccum) ? "-" : str.tostring(lastMonthTradeCountAccum)) + "件)" : "合計損益\n(" + str.tostring(maxTrades) + "件)"
+    totalRowValueRaw = isTotalRowMonthly ? lastMonthRealizedAccum : totalMoney
+    totalRowTip = isTotalRowMonthly ? "【先月損益・確定値】先月(暦月)にクローズした決済のみの実現損益合計です。含み損益を含まないため以後変動しません。\n\n先月クローズ件数: " + (na(lastMonthTradeCountAccum) ? "- (まだ月が繰り上がっていません)" : str.tostring(lastMonthTradeCountAccum) + "件") + "\n\n※手数料・スプレッド・スリッページ・スワップは未計上です。" : "実現損益 + 含み損益(直近" + str.tostring(maxTrades) + "件ウィンドウ・ポジション保有中は変動します)"
+    twoMonthsAgoLabelPrefix = showActualMonthLabel and not na(twoMonthsAgoMonthNum) ? str.tostring(twoMonthsAgoMonthNum) + "月損益" : "先々月損益"
+    twoMonthsAgoLabel = twoMonthsAgoLabelPrefix + "\n(" + (na(twoMonthsAgoTradeCountAccum) ? "-" : str.tostring(twoMonthsAgoTradeCountAccum)) + "件)"
+    twoMonthsAgoTip = "【先々月損益・確定値】先々月(暦月)にクローズした決済のみの実現損益合計です。含み損益を含まないため以後変動しません。"
+    // ── 品質フィルター行 ──
+    qfActiveList = qfR1On ? "R1" : ""
+    qfTotalSignals = qfPassCount + qfSkipCount
+    qfSkipRate = qfTotalSignals > 0 ? qfSkipCount * 100.0 / qfTotalSignals : na
+    qfRowValue = (qfR1On ? "R1のみ" : "OFF (全採用)") + "\n採用" + str.tostring(qfPassCount) + " / 見送" + str.tostring(qfSkipCount) + (na(qfSkipRate) ? "" : " (" + str.tostring(qfSkipRate, "#.#") + "%)")
+    qfNowSsl = sslDirNum == 1 ? "強気" : sslDirNum == -1 ? "弱気" : "中立"
+    qfRowTip = "【エントリー品質フィルター(v12.0でR1のみに整理)】\n有効ルール: " + (qfActiveList == "" ? "なし" : qfActiveList) + "\n\n■ 現在バーの各指標\n  SSL方向: " + qfNowSsl + " (R1閾値: エントリー方向と一致すること)\n\n■ 現在の判定\n  買い方向: " + (qOkBuy ? "通過" : "見送り\n" + qWhyBuy) + "\n  売り方向: " + (qOkSell ? "通過" : "見送り\n" + qWhySell) + "\n\n■ 採用/見送り件数はチャート読み込み後の累積です(直近N件ウィンドウとは独立)。"
+    rfStateLabel = rfState == 1 ? "強気" : rfState == -1 ? "弱気" : "中立"
+    rfRowValue = (rfEnable ? "検出中" : "OFF") + "\nBUY" + str.tostring(rfBuyCount) + " / SELL" + str.tostring(rfSellCount) + " ｜RF " + rfStateLabel + "\n(視覚情報のみ・売買未反映)"
+    rfRowTip = "【⑥Range Filter BUY/SELLフラグ・視覚情報+アラート専用】\n原案 @DonovanWall / 改変 @guikroth / v5化 @tvennのネイティブなstop-and-reverse判定。\n現在の状態: RF=" + rfStateLabel + " (期間" + str.tostring(rfPeriod) + " / 倍率" + str.tostring(rfMult, "#.##") + ")\n\n【重要】この行の件数はRF BUY/SELLラベル・アラートが発火した回数であり、実際の売買(下のPF・勝率等)には一切反映されません。ATR Bollingers自体のtrendState/SSL/ポジション状態とは無関係に、Range Filter単体の反転のみで判定します。\n\n累積検出: BUY " + str.tostring(rfBuyCount) + "件 ／ SELL " + str.tostring(rfSellCount) + "件\n実際の売買回数(閾値クロスのみ): " + str.tostring(qfPassCount) + "件\n(いずれもチャート読み込み後の累積。直近N件ウィンドウとは独立)"
+    chochStateLabel = not chDirSet ? "未確定" : chDir ? "強気" : "弱気"
+    chochRowValue = "構造:" + chochStateLabel + "\nChoCh↑" + str.tostring(chochUpCount) + " ↓" + str.tostring(chochDnCount) + (showBos ? " ｜BOS↑" + str.tostring(bosUpCount) + " ↓" + str.tostring(bosDnCount) : "")
+    chochRowTip = "【⑦ChoCh(構造転換)・v14.1新規・視覚情報+アラートのみ】\nエントリー・決済・RF併用・品質フィルターの判定には一切接続しません(表示とalert()のみ)。\n\n直近ピボット高値: " + (na(chLvlHigh) ? "-" : str.tostring(chLvlHigh, format.mintick)) + " ／ 安値: " + (na(chLvlLow) ? "-" : str.tostring(chLvlLow, format.mintick)) + "\n\n累積検出件数(チャート読み込み後): ChoCh↑" + str.tostring(chochUpCount) + "件 ／ ChoCh↓" + str.tostring(chochDnCount) + "件" + (showBos ? " ／ BOS↑" + str.tostring(bosUpCount) + "件 ／ BOS↓" + str.tostring(bosDnCount) + "件" : "") + "\n\n※Universal Swing[3935P] v2.11のChoCh実装(ピボット±ATRバッファ・水準消費・クールダウン・初回検出バイアス修正込み)を移植。有効性自体はUniversal Swing側でも本スクリプトでも未検証です【わかりません】。"
+    rateSrcLabel = isNoConvert ? "換算なし" : isManualRate ? "手動" : isJpyQuote ? "円建て" : useLiveFx ? "ライブ" : "日足参照"
+    unitCheck = isNoConvert ? syminfo.currency + "建て " + str.tostring(lotUnits, "#.##") + "単位" : "1" + syminfo.currency + "変動=¥" + f_fmtGrouped(moneyMult)
+    rateDetail = isNoConvert ? "換算なし(" + syminfo.currency + "建てで表示)" : "レート: 1" + syminfo.currency + " = " + str.tostring(resolvedRate, "#.####") + " 円(取得元: " + rateSrcLabel + ")\n参照シンボル: " + fxTicker + "\n\n建玉: " + str.tostring(numLots, "#.##") + "ロット × " + str.tostring(contractSize, "#.######") + "単位 = " + str.tostring(lotUnits, "#.##") + "単位\n価格1単位の変動 = " + str.tostring(moneyMult, "#.##") + " 円"
+    posLabel = position == 1 ? "Long 残" + str.tostring(positionFraction * 100, "#") + "%" : position == -1 ? "Short 残" + str.tostring(positionFraction * 100, "#") + "%" : "Flat"
+    entryLabel = position == 0 or na(entryPrice) ? "-" : str.tostring(entryPrice, format.mintick)
+    entryTip = position == 0 or na(entryTimeStamp) ? "ポジションなし" : "エントリー日時: " + str.format_time(entryTimeStamp, "yyyy-MM-dd HH:mm", syminfo.timezone) + "\n現在値: " + str.tostring(close, format.mintick) + "\n建玉比率: " + str.tostring(positionFraction * 100, "#") + "%"
+    reversalLine = position == 1 ? lowerThreshold : position == -1 ? upperThreshold : na
+    reversalDistPt = position == 0 or na(reversalLine) ? na : math.abs(close - reversalLine)
+    stopDistPt = position == 0 or not enableProtectiveStop or na(protectiveStopPrice) ? na : math.abs(close - protectiveStopPrice)
+    bool stopIsNearer = not na(stopDistPt) and (na(reversalDistPt) or stopDistPt <= reversalDistPt)
+    exitDistPt = stopIsNearer ? stopDistPt : reversalDistPt
+    exitRiskMoney = na(exitDistPt) ? na : exitDistPt * positionFraction * moneyMult
+    reversalLabel = na(reversalLine) ? "-" : str.tostring(reversalLine, format.mintick)
+    stopLabel = na(protectiveStopPrice) or not enableProtectiveStop ? "-" : str.tostring(protectiveStopPrice, format.mintick)
+    exitLineLabel = position == 0 ? "-" : "反転 " + reversalLabel + (enableProtectiveStop and not na(protectiveStopPrice) ? "\n保護 " + stopLabel + (stopIsNearer ? "(至近)" : "") : "")
+    exitTipReversalPart = (position == 1 ? "ロング = ベースライン − 閾値 = " : "ショート = ベースライン + 閾値 = ") + reversalLabel
+    stopPriorityNote = stopPriorityOverReversal ? "\n\n【v11.0】保護ストップ優先=ON。同一バーで反転条件が成立しても保護ストップが先に執行されます。" : "\n\n【v11.0】保護ストップ優先=OFF(v10.9互換)。"
+    exitTip = position == 0 ? "ポジションなし" : "反転決済ライン(終値ベース・baseline追随で毎バー変動):\n" + exitTipReversalPart + "\nベースライン: " + str.tostring(baseline, format.mintick) + " ／ 閾値: " + str.tostring(thresholdValue, format.mintick) + (enableHysteresis ? "" : "(中立ゾーン無効=0)") + "\n\n保護ストップ(low/high判定・エントリー時価格に固定):\n" + (enableProtectiveStop ? stopLabel : "無効") + "\n\n現在値からの距離(先に効く方を採用): " + (na(exitDistPt) ? "-" : str.tostring(exitDistPt, format.mintick)) + (stopIsNearer ? "(保護ストップが近い)" : "(反転決済ラインが近い)") + "\n到達時の想定損益変化: " + f_amt(-exitRiskMoney) + stopPriorityNote
+    headerBg = headerBgColor
+    rowBg1 = rowBgColor1
+    rowBg2 = rowBgColor2
+    decisionRule = "ロングは終値<ベースライン−閾値、ショートは終値>ベースライン+閾値。フィルターに関係なく必ず決済されます。"
+    headerTip = "※手数料・スプレッド・スリッページ・スワップ未計上の簡易シミュレーション(理論値)。ロットは固定です。\n\n品質フィルター: " + (qfR1On ? "R1のみ" : "OFF") + "\n\n決済原則: " + decisionRule + "\n\n保護ストップ: " + (enableProtectiveStop ? "有効(ATR" + str.tostring(protectiveStopAtrLen) + "×" + str.tostring(protectiveStopAtrMult, "#.#") + "・low/high判定" + (stopPriorityOverReversal ? "・反転決済より優先)" : "・反転決済が優先)") : "無効(反転決済のみ)") + "\n\n" + rateDetail + "\n\n集計対象: " + (na(spanBars) ? "-" : "直近" + str.tostring(spanBars) + "本相当") + "\n各トレードの損益は約定時点のレートで個別に円換算しています。"
+    if compactMode
+        table.cell(statsTable, 0, 0, "Position", bgcolor=f_posRowBg(position), text_size=f_sz(size.normal), text_color=darkTextColor)
+        table.cell(statsTable, 1, 0, posLabel, bgcolor=f_posRowBg(position), text_color=position == 1 ? posTextStrong : position == -1 ? negTextStrong : darkTextColor, text_size=f_sz(size.large), tooltip="ロング=緑背景／ショート=赤背景／ノーポジ=灰背景")
+        table.cell(statsTable, 0, 1, "Entry価格", bgcolor=rowBg1, text_size=f_sz(size.normal), text_color=darkTextColor)
+        table.cell(statsTable, 1, 1, entryLabel, bgcolor=rowBg1, text_color=darkTextColor, text_size=f_sz(size.large), tooltip=entryTip)
+        table.cell(statsTable, 0, 2, "決済ライン\n(反転/保護)", bgcolor=rowBg2, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 2, exitLineLabel, bgcolor=rowBg2, text_color=position == 0 ? darkTextColor : negColor, text_size=f_sz(size.normal), tooltip=exitTip)
+        unrealizedForBgCompact = position == 0 ? na : unrealizedMoney
+        table.cell(statsTable, 0, 3, "含み損益", bgcolor=f_pnlRowBg(unrealizedForBgCompact), text_size=f_sz(size.normal), text_color=darkTextColor)
+        table.cell(statsTable, 1, 3, position == 0 ? "-" : f_amt(unrealizedMoney), bgcolor=f_pnlRowBg(unrealizedForBgCompact), text_color=f_pnlTextStrong(unrealizedForBgCompact), text_size=f_sz(size.large), tooltip=position == 0 ? "ノーポジション" : str.tostring(unrealizedPt, "#.##") + " pt(建玉比率反映済み)× " + str.tostring(moneyMult, "#.##") + " 円")
+        table.cell(statsTable, 0, 4, thisMonthLabel, bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 4, f_amt(monthTotalMoney), bgcolor=rowBg1, text_color=f_amtColor(monthTotalMoney), text_size=f_sz(size.large), tooltip=monthTip)
+        table.cell(statsTable, 0, 5, totalRowLabel, bgcolor=rowBg2, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 5, f_amt(totalRowValueRaw), bgcolor=rowBg2, text_color=f_amtColor(totalRowValueRaw), text_size=f_sz(size.large), tooltip=totalRowTip)
+        if showTwoMonthsAgoRow
+            table.cell(statsTable, 0, 6, twoMonthsAgoLabel, bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+            table.cell(statsTable, 1, 6, f_amt(twoMonthsAgoRealizedAccum), bgcolor=rowBg1, text_color=f_amtColor(twoMonthsAgoRealizedAccum), text_size=f_sz(size.large), tooltip=twoMonthsAgoTip)
+        rsiRowCompact = 6 + rowCountOffset
+        rsiTextColorCompact = rsiValue >= rsiOb ? negTextStrong : rsiValue <= rsiOs ? posTextStrong : darkTextColor
+        rsiTipCompact = "RSI(" + str.tostring(rsiLen) + ") 現在値: " + str.tostring(rsiValue, "#.#") + " ／ Signal(SMA" + str.tostring(rsiSmaLen) + "): " + str.tostring(rsiSma, "#.#") + "\n買われ過ぎ閾値: " + str.tostring(rsiOb) + " ／ 売られ過ぎ閾値: " + str.tostring(rsiOs)
+        table.cell(statsTable, 0, rsiRowCompact, "RSI(" + str.tostring(rsiLen) + ")/Signal", bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, rsiRowCompact, str.tostring(rsiValue, "#.#") + " / " + str.tostring(rsiSma, "#.#"), bgcolor=rowBg1, text_color=rsiTextColorCompact, text_size=f_sz(size.normal), tooltip=rsiTipCompact)
+    else
+        table.cell(statsTable, 0, 0, "直近" + str.tostring(nTrades) + "/" + str.tostring(maxTrades) + "件 ｜ " + unitCheck + " [" + rateSrcLabel + "]", bgcolor=headerBg, text_color=color.white, text_size=f_sz(size.small), tooltip=headerTip)
+        table.cell(statsTable, 1, 0, "", bgcolor=headerBg, text_color=darkTextColor, text_size=f_sz(size.small))
+        table.merge_cells(statsTable, 0, 0, 1, 0)
+        table.cell(statsTable, 0, 1, "勝率", bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 1, decided > 0 ? str.tostring(winRate, "#.#") + "% (" + str.tostring(winCount) + "勝" + str.tostring(lossCount) + "敗)" : "-", bgcolor=rowBg1, text_color=darkTextColor, text_size=f_sz(size.small), tooltip="総利益 " + f_amt(grossProfit) + " / 総損失 " + f_amt(grossLoss) + "\n損益ゼロ " + str.tostring(nTrades - decided) + "件は勝敗から除外")
+        table.cell(statsTable, 0, 2, "PF", bgcolor=rowBg2, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 2, na(pf) ? "-" : str.tostring(pf, "#.##"), bgcolor=rowBg2, text_color=na(pf) ? darkTextColor : (pf >= 1 ? posColor : negColor), text_size=f_sz(size.small), tooltip="総利益 ÷ 総損失。1.0未満はこの窓で損失。\nペイオフレシオ: " + (na(payoff) ? "-" : str.tostring(payoff, "#.##")) + "\n平均利益 " + f_amt(avgWin) + " / 平均損失 " + f_amt(avgLoss) + "\n\n※この値はスプレッド未計上です。")
+        table.cell(statsTable, 0, 3, "期待値/回", bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 3, f_amt(expectancy), bgcolor=rowBg1, text_color=f_amtColor(expectancy), text_size=f_sz(size.small), tooltip="実現損益 ÷ 集計トレード数。手数料・スプレッドを引くと更に低下します。")
+        table.cell(statsTable, 0, 4, "最大DD", bgcolor=rowBg2, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 4, nTrades > 0 ? f_amt(-maxDD) : "-", bgcolor=rowBg2, text_color=maxDD > 0 ? negColor : darkTextColor, text_size=f_sz(size.small), tooltip="窓内トレードを時系列に並べた実現損益カーブのピークからの最大下落幅。\n最大連敗: " + str.tostring(maxLossRun) + "回")
+        table.cell(statsTable, 0, 5, "実現損益", bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 5, f_amt(realizedMoney), bgcolor=rowBg1, text_color=f_amtColor(realizedMoney), text_size=f_sz(size.small), tooltip="窓内" + str.tostring(nTrades) + "件の合計。各トレードは約定時レートで換算済み。")
+        table.cell(statsTable, 0, 6, "Position", bgcolor=f_posRowBg(position), text_size=f_sz(size.normal), text_color=darkTextColor)
+        table.cell(statsTable, 1, 6, posLabel, bgcolor=f_posRowBg(position), text_color=position == 1 ? posTextStrong : position == -1 ? negTextStrong : darkTextColor, text_size=f_sz(size.large), tooltip="ロング=緑背景／ショート=赤背景／ノーポジ=灰背景")
+        table.cell(statsTable, 0, 7, "Entry価格", bgcolor=rowBg1, text_size=f_sz(size.normal), text_color=darkTextColor)
+        table.cell(statsTable, 1, 7, entryLabel, bgcolor=rowBg1, text_color=darkTextColor, text_size=f_sz(size.large), tooltip=entryTip)
+        table.cell(statsTable, 0, 8, "決済ライン\n(反転/保護)", bgcolor=rowBg2, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 8, exitLineLabel, bgcolor=rowBg2, text_color=position == 0 ? darkTextColor : negColor, text_size=f_sz(size.normal), tooltip=exitTip)
+        unrealizedForBg = position == 0 ? na : unrealizedMoney
+        table.cell(statsTable, 0, 9, "含み損益", bgcolor=f_pnlRowBg(unrealizedForBg), text_size=f_sz(size.normal), text_color=darkTextColor)
+        table.cell(statsTable, 1, 9, position == 0 ? "-" : f_amt(unrealizedMoney), bgcolor=f_pnlRowBg(unrealizedForBg), text_color=f_pnlTextStrong(unrealizedForBg), text_size=f_sz(size.large), tooltip=position == 0 ? "ノーポジション" : str.tostring(unrealizedPt, "#.##") + " pt(建玉比率反映済み)× " + str.tostring(moneyMult, "#.##") + " 円")
+        table.cell(statsTable, 0, 10, thisMonthLabel, bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 10, f_amt(monthTotalMoney), bgcolor=rowBg1, text_color=f_amtColor(monthTotalMoney), text_size=f_sz(size.large), tooltip=monthTip)
+        table.cell(statsTable, 0, 11, totalRowLabel, bgcolor=rowBg2, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, 11, f_amt(totalRowValueRaw), bgcolor=rowBg2, text_color=f_amtColor(totalRowValueRaw), text_size=f_sz(size.large), tooltip=totalRowTip)
+        if showTwoMonthsAgoRow
+            table.cell(statsTable, 0, 12, twoMonthsAgoLabel, bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+            table.cell(statsTable, 1, 12, f_amt(twoMonthsAgoRealizedAccum), bgcolor=rowBg1, text_color=f_amtColor(twoMonthsAgoRealizedAccum), text_size=f_sz(size.large), tooltip=twoMonthsAgoTip)
+        if effectiveShowQuality
+            qrF = 12 + offTwoMonths
+            table.cell(statsTable, 0, qrF, "品質フィルター", bgcolor=rowBg2, text_size=f_sz(size.small), text_color=darkTextColor)
+            table.cell(statsTable, 1, qrF, qfRowValue, bgcolor=rowBg2, text_color=qfR1On ? posColor : darkTextColor, text_size=f_sz(size.small), tooltip=qfRowTip)
+        rowBreakdown = 12 + rowCountOffset
+        rowStopCount = 13 + rowCountOffset
+        rowGapCount = 14 + rowCountOffset
+        rowRsi = 15 + rowCountOffset
+        table.cell(statsTable, 0, rowBreakdown, "内訳(益/損)", bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, rowBreakdown, f_amt(grossProfit) + " / " + f_amt(-grossLoss), bgcolor=rowBg1, text_color=darkTextColor, text_size=f_sz(size.small), tooltip="直近" + str.tostring(nTrades) + "件の実現損益(" + f_amt(realizedMoney) + ")の内訳です。")
+        table.cell(statsTable, 0, rowStopCount, "🛑損切り決済", bgcolor=rowBg2, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, rowStopCount, nTrades > 0 ? str.tostring(stopCount) + "件 (" + str.tostring(stopRate, "#.#") + "%)" : "-", bgcolor=rowBg2, text_color=darkTextColor, text_size=f_sz(size.small), tooltip=enableProtectiveStop ? "保護ストップによる決済の件数・割合。" : "保護ストップは無効化されています(反転決済のみ)。")
+        table.cell(statsTable, 0, rowGapCount, "⛔窓抜け件数", bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, rowGapCount, nTrades > 0 ? str.tostring(gapCount) + "件" : "-", bgcolor=rowBg1, text_color=darkTextColor, text_size=f_sz(size.small), tooltip="始値が保護ストップ価格を飛び越えて約定した件数。")
+        rsiTextColor = rsiValue >= rsiOb ? negTextStrong : rsiValue <= rsiOs ? posTextStrong : darkTextColor
+        rsiTip = "RSI(" + str.tostring(rsiLen) + ") 現在値: " + str.tostring(rsiValue, "#.#") + " ／ Signal(SMA" + str.tostring(rsiSmaLen) + "): " + str.tostring(rsiSma, "#.#") + "\n\n【実測】R>=1.5の大勝ちトレード27件のうち23件(85%)がこの💰部分利確経由で発生しています。"
+        table.cell(statsTable, 0, rowRsi, "RSI(" + str.tostring(rsiLen) + ")/Signal", bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+        table.cell(statsTable, 1, rowRsi, str.tostring(rsiValue, "#.#") + " / " + str.tostring(rsiSma, "#.#"), bgcolor=rowBg1, text_color=rsiTextColor, text_size=f_sz(size.normal), tooltip=rsiTip)
+        if offRf > 0
+            rfRow = 16 + rowCountOffset
+            table.cell(statsTable, 0, rfRow, "RF検出(参考)", bgcolor=rowBg2, text_size=f_sz(size.small), text_color=darkTextColor)
+            table.cell(statsTable, 1, rfRow, rfRowValue, bgcolor=rowBg2, text_color=rfState == 1 ? posColor : rfState == -1 ? negColor : darkTextColor, text_size=f_sz(size.small), tooltip=rfRowTip)
+        if offChoch > 0
+            chochRow = 16 + rowCountOffset + offRf
+            table.cell(statsTable, 0, chochRow, "ChoCh", bgcolor=rowBg1, text_size=f_sz(size.small), text_color=darkTextColor)
+            table.cell(statsTable, 1, chochRow, chochRowValue, bgcolor=rowBg1, text_color=not chDirSet ? darkTextColor : chDir ? posColor : negColor, text_size=f_sz(size.small), tooltip=chochRowTip)
+//==============================================================================
+// アラート(alertconditionはconst stringのみ)
+//==============================================================================
+alertcondition(buySignal, title="BUY(品質フィルター通過)", message="エントリー(買い) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(sellSignal, title="SELL(品質フィルター通過)", message="エントリー(売り) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(skipBuyFirst, title="⊘見送り(買い方向)", message="⊘エントリー見送り(買い方向・品質フィルター) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(skipSellFirst, title="⊘見送り(売り方向)", message="⊘エントリー見送り(売り方向・品質フィルター) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(rawBuySignal, title="生シグナル(買い・フィルター前)", message="生シグナル(買い・品質フィルター判定前) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(rawSellSignal, title="生シグナル(売り・フィルター前)", message="生シグナル(売り・品質フィルター判定前) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(exitOnly, title="✕決済のみ", message="✕決済のみ(新規エントリーなし) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(revExitLong, title="💰ロング部分利確", message="💰ロング部分利確 {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(revExitShort, title="💰ショート部分利確", message="💰ショート部分利確 {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(bbReturnFromLower, title="💎BB下限タッチ&リターン", message="💎BB下限タッチ&リターン(反発) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(bbReturnFromUpper, title="💎BB上限タッチ&リターン", message="💎BB上限タッチ&リターン(反落) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(hitProtectiveStop, title="🛑保護ストップ到達", message="🛑保護ストップに到達し決済 {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(rfBuySignal, title="RF BUY(視覚情報のみ)【v14.3】", message="Range Filter BUYフラグ(裁量判断用/自動売買には未反映) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(rfSellSignal, title="RF SELL(視覚情報のみ)【v14.3】", message="Range Filter SELLフラグ(裁量判断用/自動売買には未反映) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(anyEntryBuy, title="▲エントリー(買い・閾値クロスのみ)【v14.2】", message="エントリー(買い) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(anyEntrySell, title="▼エントリー(売り・閾値クロスのみ)【v14.2】", message="エントリー(売り) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(chochUp, title="ChoCh↑(構造転換・強気)【v14.1・視覚情報のみ】", message="ChoCh上昇転換(構造転換) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(chochDn, title="ChoCh↓(構造転換・弱気)【v14.1・視覚情報のみ】", message="ChoCh下降転換(構造転換) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(bosUp, title="BOS↑(構造継続・強気・任意機能)【v14.1・視覚情報のみ】", message="BOS強気継続 {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(bosDn, title="BOS↓(構造継続・弱気・任意機能)【v14.1・視覚情報のみ】", message="BOS弱気継続 {{ticker}} {{interval}} 価格:{{close}}")
+if qfSendSkipAlert and anySkipFirst and barstate.isconfirmed
+    alert("⊘見送り " + syminfo.ticker + " " + timeframe.period + " ｜方向 " + (skipBuyFirst ? "BUY" : "SELL") + " ｜価格 " + str.tostring(close, format.mintick) + " ｜理由 " + str.replace_all(skipBuyFirst ? qWhyBuy : qWhySell, "\n", " / ") + " ｜SSL " + (sslDirNum == 1 ? "強気" : sslDirNum == -1 ? "弱気" : "中立"), alert.freq_once_per_bar_close)
+if (buySignal or sellSignal) and barstate.isconfirmed
+    alert("✔品質フィルター通過エントリー " + syminfo.ticker + " " + timeframe.period + " ｜方向 " + (buySignal ? "BUY" : "SELL") + " ｜価格 " + str.tostring(close, format.mintick) + " ｜SSL " + (sslDirNum == 1 ? "強気" : sslDirNum == -1 ? "弱気" : "中立") + " ｜保護ストップ " + str.tostring(protectiveStopPrice, format.mintick), alert.freq_once_per_bar)
+if (rfBuySignal or rfSellSignal) and barstate.isconfirmed
+    alert("Range Filter " + (rfBuySignal ? "BUY" : "SELL") + "フラグ(視覚情報のみ・自動売買はされません) " + syminfo.ticker + " " + timeframe.period + " ｜価格 " + str.tostring(close, format.mintick), alert.freq_once_per_bar)
+if hitProtectiveStop and gapStopExit and sendGapAlert
+    alert("⛔窓抜け " + syminfo.ticker + " " + timeframe.period + " ｜方向 " + (hitProtectiveStopLong ? "LONG" : "SHORT") + " ｜想定ストップ " + str.tostring(protectiveStopPrice, format.mintick) + " → 実際 " + str.tostring(gapStopFill, format.mintick) + " ｜スリップ " + str.tostring(gapStopSlip, format.mintick), alert.freq_once_per_bar)
+if (chochUp or chochDn) and barstate.isconfirmed
+    alert("ChoCh" + (chochUp ? "↑" : "↓") + "(構造転換・視覚情報のみ) " + syminfo.ticker + " " + timeframe.period + " ｜水準 " + str.tostring(chochUp ? chLvlHigh : chLvlLow, format.mintick) + " ｜価格 " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+if (bosUp or bosDn) and barstate.isconfirmed
+    alert("BOS" + (bosUp ? "↑" : "↓") + "(構造継続・視覚情報のみ) " + syminfo.ticker + " " + timeframe.period + " ｜水準 " + str.tostring(bosUp ? chLvlHigh : chLvlLow, format.mintick) + " ｜価格 " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
