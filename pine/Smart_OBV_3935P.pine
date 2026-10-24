@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart OBV [3935P]  v1.19  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart OBV [3935P]  v1.20  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回修正】v1.19: アラート修正: SLドテン以外の「SL決済→同じ足で新規シグナル建玉」が【SL→BUY】と表示され価格も終値だった問題を【SL＋BUY/SELL】（末尾にSL約定値）に分離。推奨ロットの切り捨てに浮動小数誤差対策(+1e-9)。ロジック変更なし。
+// 【今回追加】v1.20: ①に「OBVスムージング」（なし/EMA/SMA/WMA/SMMA(RMA)/HMA・期間）を追加し、スムージングOBVラインをペインに表示（既定ON・橙）。「判定にスムージングOBVを使用」ON時は平滑MA/BB/Zスコア/クロス/BB復帰の全判定をスムージングOBV基準に切替（既定OFF＝v1.19と同一動作）。効果は未検証【わかりません】。
+// 【前版(v1.19)で修正】v1.19: アラート修正: SLドテン以外の「SL決済→同じ足で新規シグナル建玉」が【SL→BUY】と表示され価格も終値だった問題を【SL＋BUY/SELL】（末尾にSL約定値）に分離。推奨ロットの切り捨てに浮動小数誤差対策(+1e-9)。ロジック変更なし。
 // 【前版(v1.18)で修正】v1.18: ①アラートを1本のalert()に集約（条件「Any alert() function call」1つで全通知。種類: BUY/SELL/BUY・ドテン/SELL・ドテン/SL→BUY/SL→SELL/EXIT/SL。⑦でエントリー/決済のみをON/OFF）。alertcondition 6本は廃止。②⑤に「推奨ロット（ATR連動）」行を追加（表示のみ。許容損失÷(SL幅×ATR＋コスト)×数量×レート）。ロジック変更なし。
 // 【前版(v1.17)で修正】v1.17: 名称を「Smart OBV」に変更（インジ名・テーブル見出し）。アラートの既定メッセージを「【BUY/SELL/EXIT/SL】 Smart OBV, ${{close}}」形式に変更。SLドテンのアラートを「SL→BUY」「SL→SELL」の2つに分割。ロジック変更なし。
 // 【前版(v1.16)で修正】v1.16: ⑥「SLドテン後ロック」の既定値を「Z/クロスのみ」→「Z/クロス＋BB復帰」に変更（ユーザー指定）。根拠: XAUUSD 15分足 2025/12〜2026/10（約200件、テーブル集計・インサンプル）でOFF/Z/Z＋BBのうちPF1.84・実現¥5.77M・最大DD−¥0.49M・赤字月0がいずれも最良。ロジック変更なし。
@@ -40,6 +41,11 @@ maTypeInput   = input.string("VWMA + Bollinger Bands", "MAタイプ", options=["
 maLengthInput = input.int(50, "MA期間", minval=2, group=GRP, display=display.none, tooltip="BT検証値: 50 / 100（原型クロス単独ではPF<1が多数）")
 bbMultInput   = input.float(3.0, "BB標準偏差", minval=0.001, maxval=50, step=0.5, tooltip=TT_BB, group=GRP, display=display.none)
 bool isBB = maTypeInput == "SMA + Bollinger Bands" or maTypeInput == "VWMA + Bollinger Bands"
+obvSmTypeIn = input.string("EMA", "OBVスムージング", options=["なし", "EMA", "SMA", "WMA", "SMMA (RMA)", "HMA"], group=GRP, inline="osm", display=display.none)
+obvSmLenIn  = input.int(10, "期間", minval=2, group=GRP, inline="osm", display=display.none, tooltip="OBV自体を平滑化したライン（スムージングOBV）。期間が長いほどノイズは減るが遅れる。\nなし: スムージングOBVを計算しない（ライン非表示・判定は常に生OBV）。")
+showObvSmIn = input.bool(true, "スムージングOBVラインを表示", group=GRP, display=display.none)
+useObvSmIn  = input.bool(false, "判定にスムージングOBVを使用", group=GRP, display=display.none, tooltip="ON: 平滑MA・BB・Zスコア・クロス(原型)・BB復帰の判定を、生OBVではなくスムージングOBVで行う（MA/BBもスムージングOBVから計算）。\nOFF: 従来どおり生OBVで判定（v1.19と同一）。\n※「OBVスムージング」=なし の場合はONでも生OBVで判定。\n※効果は未検証【わかりません】。ON/OFFで⑤の月別損益・最大DDを比較（同一期間＝インサンプル）。")
+bool useObvSm = useObvSmIn and obvSmTypeIn != "なし"
 
 // ── ② シグナル ──
 G2 = "② シグナル"
@@ -110,7 +116,16 @@ alertExitIn = input.bool(true, "決済のみを通知（EXIT/SL）", group=G7, t
 
 // ── 計算（ta.* は全てグローバル・無条件） ──
 src = close
-obv = ta.cum(math.sign(ta.change(src)) * volume)
+float obvRaw = ta.cum(math.sign(ta.change(src)) * volume)
+float oSmEMA = ta.ema(obvRaw, obvSmLenIn)
+float oSmSMA = ta.sma(obvRaw, obvSmLenIn)
+float oSmWMA = ta.wma(obvRaw, obvSmLenIn)
+float oSmRMA = ta.rma(obvRaw, obvSmLenIn)
+float oSmHMA = ta.hma(obvRaw, obvSmLenIn)
+float obvSm = obvSmTypeIn == "EMA" ? oSmEMA : obvSmTypeIn == "SMA" ? oSmSMA : obvSmTypeIn == "WMA" ? oSmWMA : obvSmTypeIn == "SMMA (RMA)" ? oSmRMA : obvSmTypeIn == "HMA" ? oSmHMA : na
+// 判定に使うOBV（以降の平滑MA/BB/Zスコア/クロス/BB復帰は全てこの系列）
+float obv = useObvSm ? obvSm : obvRaw
+string obvSrcNote = useObvSm ? "スムージングOBV（" + obvSmTypeIn + " " + str.tostring(obvSmLenIn) + "）" : "生OBV"
 
 float mSMA = ta.sma(obv, maLengthInput)
 float mEMA = ta.ema(obv, maLengthInput)
@@ -213,7 +228,8 @@ bool sellSig = (entS and refPos != -1) or dotS or (slRev and pos == -1)
 bool exitSig = pos == 0 and prevPos != 0 and showExitIn
 
 // ── プロット ──
-plot(obv, color=#2962FF, title="OnBalanceVolume")
+plot(obvRaw, color=#2962FF, title="OnBalanceVolume")
+plot(obvSm, "スムージングOBV", color=#FF9800, linewidth=2, display=showObvSmIn and obvSmTypeIn != "なし" ? display.all : display.none)
 plot(smoothingMA, "OBV-based MA", color=color.yellow)
 bbUpperBand = plot(bbU, title="Upper Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
 bbLowerBand = plot(bbL, title="Lower Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
@@ -421,7 +437,7 @@ if showTblIn and barstate.islast and not na(pnlTbl)
     float monthTotal = pnlMonthAcc + nz(unrl)
     string costNote = costIn > 0 ? "コスト" + str.tostring(costIn, "#.##") + "/往復を控除済み" : "コスト未計上"
     string unitCheck = pnlNoConvert ? syminfo.currency + "建て " + str.tostring(pnlUnits, "#.##") + "単位" : "1" + syminfo.currency + "変動=¥" + f_pnlGrouped(pnlMoneyMult)
-    string headerTip = "【Smart OBV 簡易シミュレーション】\nエントリー: BUY/SELL確定足の終値（ドテン時は反対売買で建て直し）\n決済: EXIT確定足の終値（SL時はSL価格/ギャップは始値）\n\n※ロット固定。" + costNote + "。手数料・スワップ・滑りは未計上。\n※TradingView標準Strategyや実取引との数値照合は未実施【わかりません】。\n\n" + unitCheck + " [" + pnlRateSrc + "]"
+    string headerTip = "【Smart OBV 簡易シミュレーション】\nエントリー: BUY/SELL確定足の終値（ドテン時は反対売買で建て直し）\n決済: EXIT確定足の終値（SL時はSL価格/ギャップは始値）\n判定元: " + obvSrcNote + "\n\n※ロット固定。" + costNote + "。手数料・スワップ・滑りは未計上。\n※TradingView標準Strategyや実取引との数値照合は未実施【わかりません】。\n\n" + unitCheck + " [" + pnlRateSrc + "]"
     string posLabel = pos == 1 ? "Long" : pos == -1 ? "Short" : "Flat"
     color  posBg = pos == 1 ? pnlLongBg : pos == -1 ? pnlShortBg : pnlRowBg2
     color  posTx = pos == 1 ? pnlPosStrong : pos == -1 ? pnlNegStrong : pnlTextColor
