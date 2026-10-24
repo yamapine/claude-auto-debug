@@ -1,6 +1,41 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-// ATR Bollingers [3935P] v14.6
+// ATR Bollingers [3935P] v14.7
+//
+// 【v14.7 変更点】ChoCh後の背景色を「全ペイン(他インジケーターエリア)」にも適用するフラグを追加
+//   ※ユーザー指示
+// ───────────────────────────────────────────────────────────────────────────────
+// ■ 要件
+//   ユーザーより「ChoCh後の背景色有効化を、ローソク足のチャート画面以外の他の
+//   indicatorエリアにも有効化する機能(全エリアに適用するかどうかのフラグ)」の指示を受けた。
+//
+// ■【事実】Pine Scriptの仕様上の制約(公式ドキュメントで確認)
+//   ・bgcolor()の引数は (color, offset, editable, show_last, title, force_overlay) のみ。
+//     overlay=trueのスクリプトでは「チャート(メインペイン)の背景」を塗る。
+//   ・force_overlayは描画先を「メインチャート」か「スクリプト自身のペイン」から選ぶ機能で、
+//     他のインジケーターのペインへ描画する手段はドキュメントに存在しない。
+//   → 本スクリプト単体で RSI/MACD 等の別ペイン背景を塗ることは不可能。
+//
+// ■ 実装方針(公式機能「外部ソース入力 input.source」による連携)
+//   (1) 本スクリプト: 新規フラグ chochBgAllPanes「背景色を全ペインに適用(連携出力)」
+//       (既定false)を追加。ONのとき、ChoCh構造方向を数値(+1=強気/−1=弱気/0=なし)で
+//       出力するplot「ChoCh背景連携(他ペイン用)」が値を持つ(display.data_windowのため
+//       チャート上には描画されない)。OFF・背景色無効・ChoCh未確定時は常に0。
+//   (2) 補助インジケーター「ChoCh背景連携 [3935P]」(別ファイル)を背景を塗りたい各ペインに
+//       追加し、その入力「ChoCh状態ソース」で上記plotを選択すると、そのペインの背景が
+//       同じ方向・同じタイミングで着色される。
+//
+// ■【変更なし・検証済み】非変更の保証
+//   追加したのは表示専用の入力1個・計算1行・plot1本のみ。chDir/chDirSetは読むだけで、
+//   ChoCh検出・①〜⑥のロジックは1文字も変更していない(PF等の数値はv14.6から変更なし)。
+//
+// ■【わかりません】未検証事項
+//   ・plot1本追加によるプロットカウント予算(64)の残余はTradingView上で未確認。
+//   ・display.data_windowのplotが価格スケール(自動スケール)に影響しないこと、および
+//     外部ソースとして選択可能であることは、仕様からの【推論】でありTradingView上で未確認。
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// ATR Bollingers [3935P] v14.6(前バージョン)
 //
 // 【v14.6 変更点】⑦ChoChの「ChoCh ↑/↓」文字ラベルを個別に表示/非表示可能に ※ユーザー指示
 // ───────────────────────────────────────────────────────────────────────────────
@@ -370,7 +405,7 @@
 //   v10.9 月ラベルを実際の暦月番号表示に切替可能化
 //   v10.4 SSLチャネルを視覚表示専用オーバーレイとして追加
 // ═══════════════════════════════════════════════════════════════════════════════
-indicator("ATR Bollingers [3935P] v14.6", overlay=true, max_labels_count=500, max_boxes_count=200)
+indicator("ATR Bollingers [3935P] v14.7", overlay=true, max_labels_count=500, max_boxes_count=200)
 //==============================================================================
 // パラメータ
 //==============================================================================
@@ -489,6 +524,7 @@ showChochRow = input.bool(true, "実績テーブルにChoCh行を表示", group=
 chochBgEnable = input.bool(false, "ChoCh後の背景色を有効化", group=grp_choch, tooltip="直近に確定したChoCh(構造転換)の方向に応じて、次に反対方向のChoChが検出されるまでチャート背景色を着色します(bgcolor)。\n\n【重要】表示専用です。既存のchDir/chDirSet(v14.1のChoCh検出ロジックが確定させる値)を読むだけで、①エントリー核心・②リスク管理・③品質フィルターR1・⑥Range Filter・ChoCh検出自体の判定には一切使いません。")
 chochBgBullColor = input.color(color.new(color.lime, 90), "背景色: ChoCh↑後(強気構造)", group=grp_choch, tooltip="ChoCh↑(強気転換)確定後、次のChoCh↓が出るまでの背景色。色相・透明度ともにこのカラーピッカーで指定できます。")
 chochBgBearColor = input.color(color.new(color.red, 90), "背景色: ChoCh↓後(弱気構造)", group=grp_choch, tooltip="ChoCh↓(弱気転換)確定後、次のChoCh↑が出るまでの背景色。色相・透明度ともにこのカラーピッカーで指定できます。")
+chochBgAllPanes = input.bool(false, "背景色を全ペインに適用(連携出力)【v14.7新規】", group=grp_choch, tooltip="ONにすると、ChoCh構造方向(+1=強気/−1=弱気/0=なし)を出力plot『ChoCh背景連携(他ペイン用)』に出します。\n\n【重要】Pine Scriptの仕様上、1つのインジケーターから他のインジケーターのペイン(RSI・MACD等)の背景を直接塗ることはできません。背景を塗りたい各ペインに補助インジケーター『ChoCh背景連携 [3935P]』を追加し、その入力『ChoCh状態ソース』でこの出力を選択してください。\n\n上の『ChoCh後の背景色を有効化』もONである必要があります。表示専用で、売買判定には一切使いません。")
 //==============================================================================
 // 定数・カラー
 //==============================================================================
@@ -666,6 +702,8 @@ if bosDn
 //   直近に確定したChoChの方向を次の反対方向ChoChが検出されるまで維持して着色する。
 //   chDir/chDirSetへの書き込みはしない(上のChoCh検出ブロックが確定させた値を再利用)。
 chochBgColor = (not chochBgEnable or not chDirSet) ? na : chDir ? chochBgBullColor : chochBgBearColor
+// 【v14.7】全ペイン連携用の数値出力(+1=強気/−1=弱気/0=なし)。補助インジケーターがinput.sourceで受け取る。
+chochBgExport = (chochBgEnable and chochBgAllPanes and chDirSet) ? (chDir ? 1 : -1) : 0
 //==============================================================================
 // Range Filter BUY/SELLフラグ【v14.3で単一エンジンに簡素化】
 //   原案 @DonovanWall / 改変 @guikroth / v5化 @tvenn。ネイティブなstop-and-reverse
@@ -972,6 +1010,8 @@ if bosDn
     label.new(int(math.avg(nz(chBarLow, bar_index), bar_index)), chLvlLow, "BOS ↓", style=label.style_label_up, color=color.new(color.black, 100), textcolor=color.new(color.gray, 20), size=size.tiny)
 //── ChoCh方向の背景色【v14.4新規・視覚情報のみ】既定OFF。chochBgColorは計算済み ──
 bgcolor(chochBgColor, title="ChoCh構造方向の背景色")
+//── 【v14.7】他ペイン背景連携用の出力(チャート上には描画せずデータウィンドウのみ) ──
+plot(chochBgExport, title="ChoCh背景連携(他ペイン用)", color=color.new(color.gray, 100), display=display.data_window)
 //==============================================================================
 // 金額フォーマット(最終バーでのみ呼ばれる)
 //==============================================================================
