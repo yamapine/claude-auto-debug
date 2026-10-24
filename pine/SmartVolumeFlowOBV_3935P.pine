@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart OBV [3935P]  v1.21  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart OBV [3935P]  v1.22  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回修正】v1.21: 「Zスコア」プロットをスタイル欄から表示できないように変更（editable=false）。OBV(数百万)と同じ縮尺で0付近に描かれ自動縮尺が崩れるため。データウィンドウ・CSV出力には従来どおり出る。ロジック変更なし。
+// 【今回修正】v1.22: ⑤テーブルに外枠（既定: #8A9BC4・太さ2、色/太さを入力で変更可）。前面表示: behind_chart=falseは維持。ただし公式ドキュメント上 behind_chart は overlay=true のスクリプトにのみ作用し、本インジ（ペイン型＋force_overlay）でローソク足より前面になるかは未確認【わかりません】。他インジとの前後はコードでは指定不可。ロジック変更なし。
+// 【前版(v1.21)で修正】v1.21: 「Zスコア」プロットをスタイル欄から表示できないように変更（editable=false）。OBV(数百万)と同じ縮尺で0付近に描かれ自動縮尺が崩れるため。データウィンドウ・CSV出力には従来どおり出る。ロジック変更なし。
 // 【前版(v1.20)で追加】v1.20: ⑧ChoCh背景色（価格ピボットの構造転換を検出し、このOBVペインの背景を着色。参考: ATR Bollingers Light [3935P] v1.0、BOS・ライン・ラベル・アラートは不使用）。表示のみ・売買ロジック変更なし。
 // 【前版(v1.19)で修正】v1.19: アラート修正: SLドテン以外の「SL決済→同じ足で新規シグナル建玉」が【SL→BUY】と表示され価格も終値だった問題を【SL＋BUY/SELL】（末尾にSL約定値）に分離。推奨ロットの切り捨てに浮動小数誤差対策(+1e-9)。ロジック変更なし。
 // 【前版(v1.18)で修正】v1.18: ①アラートを1本のalert()に集約（条件「Any alert() function call」1つで全通知。種類: BUY/SELL/BUY・ドテン/SELL・ドテン/SL→BUY/SL→SELL/EXIT/SL。⑦でエントリー/決済のみをON/OFF）。alertcondition 6本は廃止。②⑤に「推奨ロット（ATR連動）」行を追加（表示のみ。許容損失÷(SL幅×ATR＋コスト)×数量×レート）。ロジック変更なし。
@@ -82,6 +83,8 @@ tblOnMainIn = input.bool(true, "メインチャートに表示（OFF=このペ�
 tblCompactIn = input.bool(false, "コンパクト表示（Position/Entry/含み損益/月別のみ）", group=G5, tooltip="ON: 見出し・勝率・PF等を省き、Position／Entry価格／含み損益／月別損益のみ表示。OFF: 勝率・PF・期待値・最大DD・買い/売り別も表示。")
 tblPosIn    = input.string("左下", "表示位置", options=["右上", "中上", "左上", "右中", "中央", "左中", "右下", "中下", "左下"], group=G5, inline="tp")
 tblSizeIn   = input.string("標準", "サイズ", options=["極小", "小", "標準", "大", "特大"], group=G5, inline="tp", tooltip="テーブル全体の文字サイズ。標準=項目名normal・値large・月別項目名small。")
+tblFrameColIn = input.color(#8A9BC4, "テーブル外枠 色/太さ", group=G5, inline="tf", tooltip="テーブル全体を囲む外枠。チャート上でテーブルだと分かるように明るめの色を既定にしている。太さ0で枠なし。")
+tblFrameWIn   = input.int(2, "", minval=0, maxval=5, group=G5, inline="tf")
 tblMonthsIn = input.int(3, "表示する月数（当月から遡る）", minval=1, maxval=12, group=G5, tooltip="1〜12。1=当月のみ、3=当月・先月・先々月、12=当月＋過去11ヶ月。月の区切りは日本時間(Asia/Tokyo)の1日0:00。決済した足の月に計上。\nチャートに読み込まれた期間より前の月は表示しない（短い時間足ほど遡れる月数が少ない）。最下段に表示中の月の合計を表示。")
 tblMaxTradesIn = input.int(100, "統計の対象（直近N件）", minval=5, maxval=500, group=G5, tooltip="勝率・PF・期待値・最大DD・買い/売り別を、直近N件のクローズ済みトレードで集計（月別損益はこの件数に依存しない）。")
 costIn      = input.float(0.5, "コスト控除（建値通貨/往復）", minval=0.0, step=0.05, group=G5, tooltip="1往復あたりのコストを建値通貨で指定（XAUUSDならUSD/oz）。CFDはスプレッドが往復で1回分（買いはAsk・売りはBidで約定、チャートはBid基準）なので、往復＝スプレッド1回分＋滑り。OANDA証券の金CFDは取引手数料無料（fxnav掲載）。\n既定0.5: TradingView上のOANDA:XAUUSD気配で観測したスプレッド0.23〜0.58USD（1pt=0.01USD仮定・少数サンプル）に基づく概算。指標時・早朝は拡大。金利調整額（スワップ）は未計上。")
@@ -427,9 +430,9 @@ int pnlTblRows = (tblCompactIn ? 3 : 10) + tblMonthsIn + 1 + (showLotIn ? 1 : 0)
 var table pnlTbl = na
 if barstate.isfirst and showTblIn
     if tblOnMainIn
-        pnlTbl := table.new(pnlTablePos, 2, pnlTblRows, border_width = 1, border_color = pnlBorder, frame_width = 1, frame_color = pnlBorder, force_overlay = true)
+        pnlTbl := table.new(pnlTablePos, 2, pnlTblRows, border_width = 1, border_color = pnlBorder, frame_width = tblFrameWIn, frame_color = tblFrameColIn, force_overlay = true)
     else
-        pnlTbl := table.new(pnlTablePos, 2, pnlTblRows, border_width = 1, border_color = pnlBorder, frame_width = 1, frame_color = pnlBorder, force_overlay = false)
+        pnlTbl := table.new(pnlTablePos, 2, pnlTblRows, border_width = 1, border_color = pnlBorder, frame_width = tblFrameWIn, frame_color = tblFrameColIn, force_overlay = false)
 
 if showTblIn and barstate.islast and not na(pnlTbl)
     int   nT = array.size(pnlMoneyArr)
