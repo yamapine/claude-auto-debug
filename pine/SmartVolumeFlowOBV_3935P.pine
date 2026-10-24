@@ -1,8 +1,9 @@
 //@version=6
 // ============================================================================
-// Smart OBV [3935P]  v1.19  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
+// Smart OBV [3935P]  v1.20  （旧名: Smart Volume Flow OBV → OBV Z-Signal）（TradingView標準 On-balance volume をベースに改修）
 // 【変更なし・検証済み】OBV計算・出来高なしエラー・Zスコア/クロス判定・重複シグナル非表示・BB復帰ドテン/ロックのロジック・⑤損益テーブルの集計方式
-// 【今回修正】v1.19: アラート修正: SLドテン以外の「SL決済→同じ足で新規シグナル建玉」が【SL→BUY】と表示され価格も終値だった問題を【SL＋BUY/SELL】（末尾にSL約定値）に分離。推奨ロットの切り捨てに浮動小数誤差対策(+1e-9)。ロジック変更なし。
+// 【今回追加】v1.20: ⑧ChoCh背景色（価格ピボットの構造転換を検出し、このOBVペインの背景を着色。参考: ATR Bollingers Light [3935P] v1.0、BOS・ライン・ラベル・アラートは不使用）。表示のみ・売買ロジック変更なし。
+// 【前版(v1.19)で修正】v1.19: アラート修正: SLドテン以外の「SL決済→同じ足で新規シグナル建玉」が【SL→BUY】と表示され価格も終値だった問題を【SL＋BUY/SELL】（末尾にSL約定値）に分離。推奨ロットの切り捨てに浮動小数誤差対策(+1e-9)。ロジック変更なし。
 // 【前版(v1.18)で修正】v1.18: ①アラートを1本のalert()に集約（条件「Any alert() function call」1つで全通知。種類: BUY/SELL/BUY・ドテン/SELL・ドテン/SL→BUY/SL→SELL/EXIT/SL。⑦でエントリー/決済のみをON/OFF）。alertcondition 6本は廃止。②⑤に「推奨ロット（ATR連動）」行を追加（表示のみ。許容損失÷(SL幅×ATR＋コスト)×数量×レート）。ロジック変更なし。
 // 【前版(v1.17)で修正】v1.17: 名称を「Smart OBV」に変更（インジ名・テーブル見出し）。アラートの既定メッセージを「【BUY/SELL/EXIT/SL】 Smart OBV, ${{close}}」形式に変更。SLドテンのアラートを「SL→BUY」「SL→SELL」の2つに分割。ロジック変更なし。
 // 【前版(v1.16)で修正】v1.16: ⑥「SLドテン後ロック」の既定値を「Z/クロスのみ」→「Z/クロス＋BB復帰」に変更（ユーザー指定）。根拠: XAUUSD 15分足 2025/12〜2026/10（約200件、テーブル集計・インサンプル）でOFF/Z/Z＋BBのうちPF1.84・実現¥5.77M・最大DD−¥0.49M・赤字月0がいずれも最良。ロジック変更なし。
@@ -108,6 +109,18 @@ G7 = "⑦ アラート（1回の設定で全通知）"
 alertEntIn  = input.bool(true, "エントリーを通知（BUY/SELL/ドテン/SL→）", group=G7, tooltip="アラート作成時に条件で「Any alert() function call（alert()関数の呼び出しすべて）」を選ぶだけで、全種類がこの1つのアラートで届く（確定足で1回）。\nメッセージ例: 【BUY】 Smart OBV, $4023.675\n【BUY】新規買い／【BUY・ドテン】売り決済→買い／【SL→BUY】SLで売り決済→そのまま買い（SLドテン。価格はSL約定値）／【SL＋BUY】SLで決済後、同じ足の終値で新規買い（末尾にSL約定値）\n【SELL】【SELL・ドテン】【SL→SELL】も同様。")
 alertExitIn = input.bool(true, "決済のみを通知（EXIT/SL）", group=G7, tooltip="【EXIT】シグナルで決済してノーポジ／【SL】SLで決済してノーポジ（価格はSL約定値）。")
 
+// ── ⑧ ChoCh背景色（このペインに表示。売買判定には使わない） ──
+G8 = "⑧ ChoCh背景色（構造転換）"
+chBgIn       = input.bool(true, "ChoCh後の背景色を表示（このペイン）", group=G8, tooltip="価格のピボット高値/安値を、直前の構造方向と逆向きに終値で明確に抜けた最初の1回（ChoCh）を検出し、次に反対方向のChoChが出るまで、このOBVペインの背景を着色する。\n参考元: ATR Bollingers Light [3935P] v1.0 のChoCh検出（BOSは不使用）。\n表示のみで売買判定・損益テーブル・アラートには接続しない。")
+chLeftIn     = input.int(5, "Swing Left Bars", minval=1, maxval=50, group=G8, inline="chlr")
+chRightIn    = input.int(5, "Right Bars", minval=1, maxval=50, group=G8, inline="chlr", tooltip="ピボット確定には右側にこの本数の確定足が必要（確定遅延。リペイントではない）。")
+chBufAtrIn   = input.float(0.3, "ブレイク判定バッファ(ATR倍)", minval=0.0, maxval=2.0, step=0.05, group=G8, tooltip="ピボット水準をATR×この倍率だけ終値で超えて初めてブレイクと判定。")
+chAtrLenIn   = input.int(14, "バッファ用ATR期間", minval=1, group=G8)
+chConsumeIn  = input.bool(true, "同一水準の再ブレイクを禁止(水準消費)", group=G8)
+chCooldownIn = input.int(10, "ChoCh検出クールダウン(bar)", minval=1, maxval=100, group=G8)
+chBullColIn  = input.color(color.new(color.lime, 90), "背景色 ChoCh↑後/↓後", group=G8, inline="chc")
+chBearColIn  = input.color(color.new(color.red, 90), "", group=G8, inline="chc")
+
 // ── 計算（ta.* は全てグローバル・無条件） ──
 src = close
 obv = ta.cum(math.sign(ta.change(src)) * volume)
@@ -134,6 +147,41 @@ float trendEma = ta.ema(close, trendLenIn)
 float atrSL = ta.atr(atrSLLenIn)
 bool bandRetUp = ta.crossunder(obv, bbU)
 bool bandRetLo = ta.crossover(obv, bbL)
+
+// ── ⑧ ChoCh（構造転換）検出: 価格ベース。背景色専用（売買判定には接続しない） ──
+float chAtr = math.max(ta.atr(chAtrLenIn), 0.0001)
+float chPh  = ta.pivothigh(high, chLeftIn, chRightIn)
+float chPl  = ta.pivotlow(low, chLeftIn, chRightIn)
+var float chLvlHigh = na
+var float chLvlLow  = na
+var bool  chUsedHigh = false
+var bool  chUsedLow  = false
+var bool  chDir    = false
+var bool  chDirSet = false
+var int   chLastBar = na
+if not na(chPh)
+    chLvlHigh := chPh
+    chUsedHigh := false
+if not na(chPl)
+    chLvlLow := chPl
+    chUsedLow := false
+float chUpLvl = na(chLvlHigh) ? na : chLvlHigh + chAtr * chBufAtrIn
+float chDnLvl = na(chLvlLow) ? na : chLvlLow - chAtr * chBufAtrIn
+bool chXUp = not na(chUpLvl) and not na(chUpLvl[1]) and close > chUpLvl and close[1] <= chUpLvl[1]
+bool chXDn = not na(chDnLvl) and not na(chDnLvl[1]) and close < chDnLvl and close[1] >= chDnLvl[1]
+bool chCoolOk = na(chLastBar) or (bar_index - chLastBar) >= chCooldownIn
+bool chochUp = chBgIn and chXUp and (not chDirSet or not chDir) and (not chConsumeIn or not chUsedHigh) and chCoolOk and barstate.isconfirmed
+bool chochDn = chBgIn and chXDn and (not chDirSet or chDir) and (not chConsumeIn or not chUsedLow) and chCoolOk and barstate.isconfirmed
+if chochUp
+    chDir := true
+    chDirSet := true
+    chUsedHigh := true
+    chLastBar := bar_index
+if chochDn
+    chDir := false
+    chDirSet := true
+    chUsedLow := true
+    chLastBar := bar_index
 
 bool isCross  = sigModeIn == "クロス(原型)"
 bool rawLong  = (isCross ? crossUp : zUp) and barstate.isconfirmed
@@ -219,6 +267,7 @@ bbUpperBand = plot(bbU, title="Upper Bollinger Band", color=color.green, display
 bbLowerBand = plot(bbL, title="Lower Bollinger Band", color=color.green, display=isBB ? display.all : display.none, editable=isBB)
 fill(bbUpperBand, bbLowerBand, color=isBB ? color.new(color.green, 90) : na, title="Bollinger Bands Background Fill", display=isBB ? display.all : display.none, editable=isBB)
 plot(z, "Zスコア", display=display.data_window)
+bgcolor(not chBgIn or not chDirSet ? na : chDir ? chBullColIn : chBearColIn, title="ChoCh構造方向の背景色")
 
 // ── シグナル（Y座標はOHLC/ペイン端に固定） ──
 plotshape(buySig and showPaneIn, "BUY(ペイン)", shape.triangleup, location.bottom, color.lime, size=size.tiny)
