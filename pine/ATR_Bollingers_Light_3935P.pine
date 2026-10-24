@@ -1,0 +1,254 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════
+// ATR Bollingers Light [3935P] v1.0
+//   ATR Bollingers [3935P] v14.7 の軽量版。
+//   表示: ベースライン / BB / MA / SSLチャネル / ローソク足色付け / ChoCh・BOS / ChoCh背景色
+//   ・ローソク足色はポジション状態基準(閾値クロスでエントリー、反転で決済。Flat時はグレー)。
+//   ・ChoChは視覚情報+アラート専用で、売買判定には接続しない。
+// ═══════════════════════════════════════════════════════════════════════════════
+indicator("ATR Bollingers Light [3935P]", overlay=true, max_labels_count=500)
+//==============================================================================
+// パラメータ
+//==============================================================================
+// ── ヒステリシス・ベースライン ──
+enableHysteresis = input.bool(true, "中立ゾーン有効化", group="ヒステリシス", tooltip="ベースライン±閾値の中立ゾーン内では前回状態を維持し、ウィップソーを抑制します。無効時は閾値ゼロ。")
+thresholdMode = input.string("ATR倍率", "閾値方式", options=["ATR倍率", "固定値(建値通貨)"], group="ヒステリシス")
+atrMultiplier = input.float(2.0, "ATR倍率閾値", minval=0.1, maxval=3.0, step=0.05, group="ヒステリシス", tooltip="閾値 = ATR × 倍率")
+fixedThreshold = input.float(8.0, "固定閾値(建値通貨)", minval=0.01, step=1.0, group="ヒステリシス")
+atrPeriod = input.int(14, "ATR期間", minval=5, maxval=200, group="ヒステリシス", tooltip="閾値幅とChoChブレイク判定バッファに使うATR期間。")
+baselinePeriod = input.int(20, "ベースライン期間", minval=5, maxval=800, group="ベースライン")
+smoothing = input.int(5, "平滑化", minval=1, maxval=10, group="ベースライン", tooltip="ベースライン = EMA(EMA(close, 期間), 平滑化)")
+// ── エントリーフィルター ──
+enableTrendFilter = input.bool(true, "傾き×ベースライン/MAフィルター有効化", group="シグナルフィルター", tooltip="BB中央が上昇中はベースライン<MAの場合のみSELL、下降中はベースライン>MAの場合のみBUYを許可します(決済には影響しません)。")
+bbSlopeLookback = input.int(5, "BB中央ライン傾き比較本数", minval=1, maxval=200, group="シグナルフィルター")
+qfUseSSL = input.bool(true, "R1: SSLチャネルの方向が不一致なら見送り", group="エントリー品質フィルター", tooltip="終値がSSL上(SMA高値)より上=強気、SSL下(SMA安値)より下=弱気。エントリー方向と一致しない場合は見送ります。")
+qfClearPending = input.bool(true, "見送り時に保留(pending)を破棄", group="エントリー品質フィルター", tooltip="ONの場合、見送ったシグナルが後から遅れて発火することはありません。")
+// ── 移動平均線 ──
+maTypeInput = input.string("EMA", "種別", options=["SMA", "EMA", "WMA"], group="移動平均線")
+maLength = input.int(60, "期間", minval=1, maxval=1000, group="移動平均線")
+maSource = input.source(close, "ソース", group="移動平均線")
+showMA = input.bool(true, "表示", group="移動平均線")
+maLineColor = input.color(color.new(#2962ff, 0), "ラインカラー", group="移動平均線")
+// ── ボリンジャーバンド ──
+enableBB = input.bool(true, "BB表示", group="ボリンジャーバンド", tooltip="表示のON/OFFのみ。BB中央の傾きは上のフィルターで常に使用されます。")
+bbLength = input.int(200, "BB期間", minval=5, maxval=800, group="ボリンジャーバンド")
+bbMultiplier = input.float(2.5, "BB倍率", minval=1.0, maxval=5.0, step=0.1, group="ボリンジャーバンド")
+bbLineColor = input.color(color.new(#b8b8b8, 0), "ラインカラー", group="ボリンジャーバンド", tooltip="BB中央・上限・下限の3本に適用されます。")
+// ── SSLチャネル ──
+enableSSL = input.bool(true, "SSLチャネル表示", group="SSLチャネル", tooltip="表示のON/OFFのみ。R1の判定は常に計算されます。")
+sslLen = input.int(200, "SSL期間(高安SMA)", minval=2, maxval=500, group="SSLチャネル")
+sslWicks = input.bool(false, "ヒゲも判定に使う(Take Wicks)", group="SSLチャネル", tooltip="帯の色分けのみに影響します(R1は常に終値基準)。")
+sslFillOn = input.bool(true, "帯を塗る", group="SSLチャネル")
+// ── ローソク足色付け ──
+enableCandleColor = input.bool(true, "ローソク足色付け", group="表示")
+barBullColor = input.color(color.new(#4caf50, 0), "上昇トレンド", group="表示", inline="barcolor")
+barBearColor = input.color(color.new(#f44336, 0), "下降トレンド", group="表示", inline="barcolor")
+barNeutralColor = input.color(color.new(#808080, 50), "Flat(ノーポジ)", group="表示", inline="barcolor")
+// ── ChoCh(構造転換) ──
+grp_choch = "ChoCh(構造転換)"
+chochShow = input.bool(true, "ChoCh表示", group=grp_choch, tooltip="ピボット高値/安値を、直前の構造方向と逆向きに終値で明確に抜けた最初の1回を検出します。表示とアラートのみで、売買判定には使いません。")
+chochLeftBars = input.int(5, "Swing Left Bars", minval=1, maxval=50, group=grp_choch)
+chochRightBars = input.int(5, "Swing Right Bars", minval=1, maxval=50, group=grp_choch, tooltip="ピボット確定には右側にこの本数の確定足が必要です(確定遅延。リペイントではありません)。")
+chochBufAtr = input.float(0.3, "ブレイク判定バッファ(ATR倍)", minval=0.0, maxval=2.0, step=0.05, group=grp_choch, tooltip="ピボット水準をATR×この倍率だけ超えて初めてブレイクと判定します。")
+chochConsume = input.bool(true, "同一水準の再ブレイクを禁止(水準消費)", group=grp_choch)
+chochCooldown = input.int(10, "ChoCh検出クールダウン(bar)", minval=1, maxval=100, group=grp_choch)
+chochStruct = input.bool(true, "構造ラインを表示", group=grp_choch)
+chochShowLabel = input.bool(true, "ChoChラベル(文字)を表示", group=grp_choch, tooltip="「ChoCh ↑/↓」の文字ラベルだけを個別に表示/非表示します。")
+showBos = input.bool(false, "BOS(構造継続)シグナルも表示", group=grp_choch, tooltip="ChoCh確定後、同方向へ構造を更新した動きをBOSとして表示します(グレー点線)。")
+chochBgEnable = input.bool(false, "ChoCh後の背景色を有効化", group=grp_choch, tooltip="直近に確定したChoChの方向に応じて、次に反対方向のChoChが出るまで背景を着色します。")
+chochBgBullColor = input.color(color.new(color.lime, 90), "背景色: ChoCh↑後(強気構造)", group=grp_choch)
+chochBgBearColor = input.color(color.new(color.red, 90), "背景色: ChoCh↓後(弱気構造)", group=grp_choch)
+chochBgAllPanes = input.bool(false, "背景色を全ペインに適用(連携出力)", group=grp_choch, tooltip="ONにすると、ChoCh構造方向(+1=強気/−1=弱気/0=なし)を出力『ChoCh背景連携(他ペイン用)』に出します。\n\n他ペインの背景は直接塗れないため、塗りたい各ペインに補助インジケーター『ChoCh背景連携 [3935P]』を追加し、その入力でこの出力を選択してください。")
+//==============================================================================
+// 定数・カラー
+//==============================================================================
+EPSILON = 0.0001
+bullColor = color.new(#4caf50, 0)
+bearColor = color.new(#f44336, 0)
+neutralColor = color.new(#808080, 50)
+//==============================================================================
+// 計算(全ta.*はグローバルスコープで無条件実行)
+//==============================================================================
+baselineRaw = ta.ema(close, baselinePeriod)
+baseline = ta.ema(baselineRaw, smoothing)
+atrValue = ta.atr(atrPeriod)
+safeATR = math.max(atrValue, EPSILON)
+thresholdRaw = thresholdMode == "ATR倍率" ? safeATR * atrMultiplier : fixedThreshold
+thresholdValue = enableHysteresis ? thresholdRaw : 0.0
+upperThreshold = baseline + thresholdValue
+lowerThreshold = baseline - thresholdValue
+var int trendState = 0
+if close > upperThreshold
+    trendState := 1
+else if close < lowerThreshold
+    trendState := -1
+bbBasis = ta.sma(close, bbLength)
+bbDev = math.max(ta.stdev(close, bbLength), EPSILON)
+upperBB = bbBasis + bbDev * bbMultiplier
+lowerBB = bbBasis - bbDev * bbMultiplier
+f_ma(src, simple int len, t) =>
+    switch t
+        "SMA" => ta.sma(src, len)
+        "EMA" => ta.ema(src, len)
+        => ta.wma(src, len)
+maValue = f_ma(maSource, maLength, maTypeInput)
+//==============================================================================
+// SSLチャネル(表示 + R1判定)
+//==============================================================================
+sslMa1 = ta.sma(high, sslLen)
+sslMa2 = ta.sma(low, sslLen)
+sslValid = not na(sslMa1) and not na(sslMa2)
+sslSrcHi = sslWicks ? high : close
+sslSrcLo = sslWicks ? low : close
+var int sslHlv = 0
+sslHlv := not sslValid ? nz(sslHlv[1], 0) : sslSrcHi > sslMa1 ? 1 : sslSrcLo < sslMa2 ? -1 : nz(sslHlv[1], 0)
+sslUpLine = sslHlv < 0 ? sslMa2 : sslMa1
+sslDownLine = sslHlv < 0 ? sslMa1 : sslMa2
+sslBull = sslHlv == 1
+sslBear = sslHlv == -1
+// R1判定用の方向(終値基準)
+int sslDirNum = not sslValid ? 0 : close > sslMa1 ? 1 : close < sslMa2 ? -1 : 0
+//==============================================================================
+// ChoCh(構造転換)検出 — 視覚情報+アラート専用(売買判定には接続しない)
+//==============================================================================
+float chPh = ta.pivothigh(high, chochLeftBars, chochRightBars)
+float chPl = ta.pivotlow(low, chochLeftBars, chochRightBars)
+var float chLvlHigh = na
+var float chLvlLow = na
+var int chBarHigh = na
+var int chBarLow = na
+var bool chUsedHigh = false
+var bool chUsedLow = false
+var bool chDir = false
+var bool chDirSet = false
+var int chLastBar = na
+if not na(chPh)
+    chLvlHigh := chPh
+    chBarHigh := bar_index - chochRightBars
+    chUsedHigh := false
+if not na(chPl)
+    chLvlLow := chPl
+    chBarLow := bar_index - chochRightBars
+    chUsedLow := false
+chBuf = safeATR * chochBufAtr
+chUpLvl = na(chLvlHigh) ? na : chLvlHigh + chBuf
+chDnLvl = na(chLvlLow) ? na : chLvlLow - chBuf
+chXUp = not na(chUpLvl) and not na(chUpLvl[1]) and close > chUpLvl and close[1] <= chUpLvl[1]
+chXDn = not na(chDnLvl) and not na(chDnLvl[1]) and close < chDnLvl and close[1] >= chDnLvl[1]
+chFreeUp = (not chochConsume) or (not chUsedHigh)
+chFreeDn = (not chochConsume) or (not chUsedLow)
+chCoolOk = na(chLastBar) or (bar_index - chLastBar) >= chochCooldown
+// 方向ゲート: 初回確定前はどちらの向きも開放。確定後は逆方向=ChoCh、同方向=BOS。
+chGateChochUp = (not chDirSet) or (not chDir)
+chGateChochDn = (not chDirSet) or chDir
+chGateBosUp = chDirSet and chDir
+chGateBosDn = chDirSet and (not chDir)
+chochUp = chochShow and chXUp and chGateChochUp and chFreeUp and chCoolOk and barstate.isconfirmed
+chochDn = chochShow and chXDn and chGateChochDn and chFreeDn and chCoolOk and barstate.isconfirmed
+bosUp = showBos and chXUp and chGateBosUp and chFreeUp and chCoolOk and barstate.isconfirmed
+bosDn = showBos and chXDn and chGateBosDn and chFreeDn and chCoolOk and barstate.isconfirmed
+if chochUp
+    chDir := true
+    chDirSet := true
+    chUsedHigh := true
+    chLastBar := bar_index
+if chochDn
+    chDir := false
+    chDirSet := true
+    chUsedLow := true
+    chLastBar := bar_index
+if bosUp
+    chUsedHigh := true
+    chLastBar := bar_index
+if bosDn
+    chUsedLow := true
+    chLastBar := bar_index
+chochBgColor = (not chochBgEnable or not chDirSet) ? na : chDir ? chochBgBullColor : chochBgBearColor
+// 全ペイン連携用の数値出力(+1=強気/−1=弱気/0=なし)。補助インジケーターがinput.sourceで受け取る。
+chochBgExport = (chochBgEnable and chochBgAllPanes and chDirSet) ? (chDir ? 1 : -1) : 0
+//==============================================================================
+// エントリーフィルター
+//==============================================================================
+qOkBuy = not qfUseSSL or sslDirNum == 1
+qOkSell = not qfUseSSL or sslDirNum == -1
+bbSlopeRefValue = bbBasis[bbSlopeLookback]
+bbSlopeUp = not na(bbSlopeRefValue) and bbBasis > bbSlopeRefValue
+bbSlopeDn = not na(bbSlopeRefValue) and bbBasis < bbSlopeRefValue
+sellFilterOk = not enableTrendFilter or not bbSlopeUp or baseline < maValue
+buyFilterOk = not enableTrendFilter or not bbSlopeDn or baseline > maValue
+//==============================================================================
+// ポジション状態(ローソク足色付け用。閾値クロスでエントリー、反転で決済)
+//==============================================================================
+var int position = 0
+var bool pendingLong = false
+var bool pendingShort = false
+if (position == 1 and trendState == -1) or (position == -1 and trendState == 1)
+    position := 0
+prevTrendState = nz(trendState[1], 0)
+if trendState == 1 and prevTrendState <= 0
+    pendingLong := true
+if trendState == -1 and prevTrendState >= 0
+    pendingShort := true
+if trendState != 1
+    pendingLong := false
+if trendState != -1
+    pendingShort := false
+rawBuySignal = pendingLong and buyFilterOk and position != 1
+rawSellSignal = pendingShort and sellFilterOk and position != -1
+buySignal = rawBuySignal and qOkBuy
+sellSignal = rawSellSignal and qOkSell
+if qfClearPending and ((rawBuySignal and not qOkBuy) or (rawSellSignal and not qOkSell))
+    pendingLong := false
+    pendingShort := false
+if buySignal or sellSignal
+    position := buySignal ? 1 : -1
+    pendingLong := false
+    pendingShort := false
+//==============================================================================
+// ローソク足色付け(ポジション状態ベース)
+//==============================================================================
+candleColor = enableCandleColor ? (position == 0 ? barNeutralColor : trendState == 1 ? barBullColor : trendState == -1 ? barBearColor : barNeutralColor) : na
+barcolor(candleColor)
+//==============================================================================
+// 描画
+//==============================================================================
+baselineColor = trendState == 1 ? bullColor : trendState == -1 ? bearColor : neutralColor
+plot(baseline, color=baselineColor, linewidth=3, title="ベースライン")
+plot(enableBB ? bbBasis : na, color=bbLineColor, linewidth=1, title="BB中央")
+plot(enableBB ? upperBB : na, color=bbLineColor, linewidth=1, title="BB上限")
+plot(enableBB ? lowerBB : na, color=bbLineColor, linewidth=1, title="BB下限")
+plot(showMA ? maValue : na, color=maLineColor, linewidth=2, title="MA/EMA/WMA")
+sslLineColor = sslBull ? bullColor : sslBear ? bearColor : neutralColor
+sslUpPlot = plot(enableSSL and sslValid ? sslUpLine : na, color=sslLineColor, linewidth=2, title="SSL上")
+sslDownPlot = plot(enableSSL and sslValid ? sslDownLine : na, color=sslLineColor, linewidth=2, title="SSL下")
+fill(sslUpPlot, sslDownPlot, title="SSL帯", color=enableSSL and sslFillOn ? color.new(sslLineColor, 91) : na)
+//── ChoCh(白・実線)/BOS(グレー・点線) ──
+if chochStruct and chochUp and not na(chBarHigh)
+    line.new(chBarHigh, chLvlHigh, bar_index, chLvlHigh, color=color.white, width=1, style=line.style_solid)
+if chochShowLabel and chochUp
+    label.new(int(math.avg(nz(chBarHigh, bar_index), bar_index)), chLvlHigh, "ChoCh ↑", style=label.style_label_down, color=color.new(color.black, 100), textcolor=color.white, size=size.small)
+if chochStruct and chochDn and not na(chBarLow)
+    line.new(chBarLow, chLvlLow, bar_index, chLvlLow, color=color.white, width=1, style=line.style_solid)
+if chochShowLabel and chochDn
+    label.new(int(math.avg(nz(chBarLow, bar_index), bar_index)), chLvlLow, "ChoCh ↓", style=label.style_label_up, color=color.new(color.black, 100), textcolor=color.white, size=size.small)
+if chochStruct and bosUp and not na(chBarHigh)
+    line.new(chBarHigh, chLvlHigh, bar_index, chLvlHigh, color=color.new(color.gray, 40), width=1, style=line.style_dashed)
+if bosUp
+    label.new(int(math.avg(nz(chBarHigh, bar_index), bar_index)), chLvlHigh, "BOS ↑", style=label.style_label_down, color=color.new(color.black, 100), textcolor=color.new(color.gray, 20), size=size.tiny)
+if chochStruct and bosDn and not na(chBarLow)
+    line.new(chBarLow, chLvlLow, bar_index, chLvlLow, color=color.new(color.gray, 40), width=1, style=line.style_dashed)
+if bosDn
+    label.new(int(math.avg(nz(chBarLow, bar_index), bar_index)), chLvlLow, "BOS ↓", style=label.style_label_up, color=color.new(color.black, 100), textcolor=color.new(color.gray, 20), size=size.tiny)
+bgcolor(chochBgColor, title="ChoCh構造方向の背景色")
+plot(chochBgExport, title="ChoCh背景連携(他ペイン用)", color=color.new(color.gray, 100), display=display.data_window)
+//==============================================================================
+// アラート(ChoCh/BOSのみ)
+//==============================================================================
+alertcondition(chochUp, title="ChoCh↑(構造転換・強気)", message="ChoCh上昇転換(構造転換) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(chochDn, title="ChoCh↓(構造転換・弱気)", message="ChoCh下降転換(構造転換) {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(bosUp, title="BOS↑(構造継続・強気)", message="BOS強気継続 {{ticker}} {{interval}} 価格:{{close}}")
+alertcondition(bosDn, title="BOS↓(構造継続・弱気)", message="BOS弱気継続 {{ticker}} {{interval}} 価格:{{close}}")
+if (chochUp or chochDn) and barstate.isconfirmed
+    alert("ChoCh" + (chochUp ? "↑" : "↓") + " " + syminfo.ticker + " " + timeframe.period + " ｜水準 " + str.tostring(chochUp ? chLvlHigh : chLvlLow, format.mintick) + " ｜価格 " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+if (bosUp or bosDn) and barstate.isconfirmed
+    alert("BOS" + (bosUp ? "↑" : "↓") + " " + syminfo.ticker + " " + timeframe.period + " ｜水準 " + str.tostring(bosUp ? chLvlHigh : chLvlLow, format.mintick) + " ｜価格 " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
