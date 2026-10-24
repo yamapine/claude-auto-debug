@@ -58,7 +58,6 @@ showBos = input.bool(false, "BOS(構造継続)シグナルも表示", group=grp_
 chochBgEnable = input.bool(false, "ChoCh後の背景色を有効化", group=grp_choch, tooltip="直近に確定したChoChの方向に応じて、次に反対方向のChoChが出るまで背景を着色します。")
 chochBgBullColor = input.color(color.new(color.lime, 90), "背景色: ChoCh↑後(強気構造)", group=grp_choch)
 chochBgBearColor = input.color(color.new(color.red, 90), "背景色: ChoCh↓後(弱気構造)", group=grp_choch)
-chochBgAllPanes = input.bool(false, "背景色を全ペインに適用(連携出力)", group=grp_choch, tooltip="ONにすると、ChoCh構造方向(+1=強気/−1=弱気/0=なし)を出力『ChoCh背景連携(他ペイン用)』に出します。\n\n他ペインの背景は直接塗れないため、塗りたい各ペインに補助インジケーター『ChoCh背景連携 [3935P]』を追加し、その入力でこの出力を選択してください。")
 //==============================================================================
 // 定数・カラー
 //==============================================================================
@@ -164,8 +163,6 @@ if bosDn
     chUsedLow := true
     chLastBar := bar_index
 chochBgColor = (not chochBgEnable or not chDirSet) ? na : chDir ? chochBgBullColor : chochBgBearColor
-// 全ペイン連携用の数値出力(+1=強気/−1=弱気/0=なし)。補助インジケーターがinput.sourceで受け取る。
-chochBgExport = (chochBgEnable and chochBgAllPanes and chDirSet) ? (chDir ? 1 : -1) : 0
 //==============================================================================
 // エントリーフィルター
 //==============================================================================
@@ -240,7 +237,6 @@ if chochStruct and bosDn and not na(chBarLow)
 if bosDn
     label.new(int(math.avg(nz(chBarLow, bar_index), bar_index)), chLvlLow, "BOS ↓", style=label.style_label_up, color=color.new(color.black, 100), textcolor=color.new(color.gray, 20), size=size.tiny)
 bgcolor(chochBgColor, title="ChoCh構造方向の背景色")
-plot(chochBgExport, title="ChoCh背景連携(他ペイン用)", color=color.new(color.gray, 100), display=display.data_window)
 //==============================================================================
 // アラート(ChoCh/BOSのみ)
 //==============================================================================
